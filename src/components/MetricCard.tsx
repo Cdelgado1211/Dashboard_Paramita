@@ -1,0 +1,3 @@
+import { Icon } from './Icons'
+type Props = { title: string; value: number; description: string; icon: string; tone: string; active?: boolean; onClick: () => void }
+export function MetricCard({ title, value, description, icon, tone, active, onClick }: Props) { return <button className={`metric-card ${tone} ${active ? 'selected' : ''}`} onClick={onClick}><div className="metric-top"><span className="metric-icon"><Icon name={icon} size={19} /></span><span className="metric-chevron"><Icon name="arrow" size={16} /></span></div><strong>{value}</strong><span className="metric-title">{title}</span><small>{description}</small></button> }
