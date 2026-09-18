@@ -5,5 +5,5 @@ export interface MovementTracking { caseId: string; createdAt?: string | null; u
 export interface RecentActivity { caseId: string; timestamp: string; stage: string; stageLabel: string; status: string; statusLabel: string; dashboardStatus: DashboardStatus; movementType: string | null; movementLabel: string; gnpTrackingOt: string | null }
 export interface DashboardSummary { total: number; pending: number; inProgress: number; completed: number; rejected: number; requiresReview: number; waitingForInformation: number; technicalFailures: number; readyForReprocessing: number; gnpInProgress: number }
 export interface DashboardResponse { summary: DashboardSummary; stageDistribution: { stage: string; label: string; count: number }[]; recentActivity: RecentActivity[]; orders: MovementTracking[] }
-export interface MovementFilters { status?: string; product?: string; search?: string; from?: string; to?: string; attention?: boolean; gnpOnly?: boolean; page?: number; pageSize?: number }
+export interface MovementFilters { status?: string; product?: string; search?: string; from?: string; to?: string; attention?: boolean; attentionType?: string; gnpOnly?: boolean; page?: number; pageSize?: number }
 export interface MovementResponse { items: MovementTracking[]; total: number }
