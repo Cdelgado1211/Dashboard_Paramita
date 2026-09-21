@@ -9,6 +9,6 @@ export const workflowCategoryOptions: { value: WorkflowCategory; label: string; 
   { value: 'rejected', label: 'Rechazadas', description: 'Movimientos rechazados o cancelados.' },
 ]
 const categoryStatuses: Record<Exclude<WorkflowCategory, 'all'>, string[]> = {
-  processing: ['RECEIVED', 'PROCESSING', 'READY_FOR_REPROCESSING'], readyForGnp: ['READY_FOR_GNP'], gnpInProgress: ['GNP_SUBMITTING', 'GNP_IN_PROGRESS'], attention: ['WAITING_FOR_INFORMATION', 'REQUIRES_REVIEW', 'FAILED_TECHNICAL'], completed: ['GNP_COMPLETED'], rejected: ['GNP_REJECTED']
+  processing: ['RECEIVED', 'PROCESSING', 'READY_FOR_REPROCESSING'], readyForGnp: ['READY_FOR_GNP'], gnpInProgress: ['QUEUED_FOR_GNP', 'GNP_SUBMITTING', 'GNP_IN_PROGRESS'], attention: ['WAITING_FOR_INFORMATION', 'REQUIRES_REVIEW', 'FAILED_TECHNICAL', 'GNP_RETRY_SCHEDULED', 'SUPPORT_REVIEW_REQUIRED'], completed: ['GNP_COMPLETED'], rejected: ['GNP_REJECTED']
 }
 export function matchesWorkflowCategory(workflowStatus: string | null | undefined, category?: string) { if (!category || category === 'all') return true; return category in categoryStatuses ? categoryStatuses[category as Exclude<WorkflowCategory, 'all'>].includes(workflowStatus ?? '') : true }

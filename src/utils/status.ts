@@ -1,6 +1,3 @@
-import type { DashboardStatus } from '../types/movement'
-export type StatusCategory = 'neutral' | 'attention' | 'error' | 'info' | 'success'
-export interface StatusPresentation { label: string; description: string; category: StatusCategory; icon: string }
-export function getWorkflowStatusPresentation(status?: string | null, label?: string | null): StatusPresentation { const map: Record<string, StatusPresentation> = { pending: { label: label || 'Pendiente', description: 'Pendiente de completar', category: 'attention', icon: '◷' }, inProgress: { label: label || 'En proceso', description: 'El flujo está en proceso', category: 'info', icon: '→' }, completed: { label: label || 'Completada', description: 'Movimiento completado', category: 'success', icon: '✓' }, rejected: { label: label || 'Rechazada', description: 'Movimiento rechazado', category: 'error', icon: '×' } }; return map[status ?? ''] ?? { label: label || '—', description: '—', category: 'neutral', icon: '•' } }
+export { getWorkflowStatusPresentation, getWorkflowStatusCategory, dashboardStatusToCategory, getWorkflowStatusLabel, getWorkflowStageLabel, workflowStatusLabels, workflowStageLabels } from './workflowPresentation'
+export type { StatusCategory, StatusPresentation } from './workflowPresentation'
 export const translateReason = (code?: string) => code ? code.replaceAll('_', ' ').toLowerCase().replace(/^./, c => c.toUpperCase()) : '—'
-export const dashboardStatusToCategory = (status?: DashboardStatus | null): StatusCategory => getWorkflowStatusPresentation(status).category
