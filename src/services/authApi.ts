@@ -1,6 +1,12 @@
 import { getApiBaseUrl } from './apiConfig'
 
-export interface AuthSession { authenticated: boolean }
+export interface AuthSession {
+  authenticated: boolean
+  authorized?: boolean
+  requiredScope?: string
+  sid?: string
+  user?: unknown
+}
 
 export class AuthSessionError extends Error {
   constructor(public readonly status: number, message: string) {
