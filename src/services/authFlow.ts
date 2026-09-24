@@ -8,3 +8,7 @@ export function consumeAuthCodeFromHash(): string | null {
   window.history.replaceState(window.history.state, document.title, `${window.location.pathname}${window.location.search}`)
   return authCode
 }
+
+export function hasAuthCodeFragment(): boolean {
+  return window.location.hash.startsWith('#auth_code')
+}

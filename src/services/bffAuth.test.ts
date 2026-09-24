@@ -5,6 +5,8 @@ import { requestJson } from './apiClient'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
+import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
+import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '' }
@@ -18,6 +20,8 @@ beforeEach(() => {
   vi.stubGlobal('sessionStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) })
   vi.stubGlobal('window', browserWindow)
   vi.stubGlobal('document', { title: 'Paramita' })
+  clearAuthAttempt()
+  clearLogoutPending()
   location.hash = ''
   location.href = ''
   history.replaceState.mockReset()
@@ -152,5 +156,60 @@ describe('BFF auth flow', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(initiateOidcLogout()).rejects.toMatchObject({ status: 401 })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('allows automatic login once and blocks a second render', () => {
+    expect(tryBeginAutomaticLogin()).toBe(true)
+    expect(tryBeginAutomaticLogin()).toBe(false)
+    expect(getAuthAttemptState()?.status).toBe('started')
+  })
+
+  it('blocks automatic login during the cooldown and after a failed attempt', () => {
+    expect(tryBeginAutomaticLogin()).toBe(true)
+    expect(isAuthAttemptInCooldown()).toBe(true)
+    markAuthFailed()
+    expect(tryBeginAutomaticLogin()).toBe(false)
+  })
+
+  it('does not start another login when focus or visibility revalidates auth', () => {
+    expect(tryBeginAutomaticLogin()).toBe(true)
+    expect(tryBeginAutomaticLogin()).toBe(false)
+    expect(tryBeginAutomaticLogin()).toBe(false)
+  })
+
+  it('does not restart OAuth after a post-login 401', () => {
+    markAuthFailed()
+    expect(tryBeginAutomaticLogin()).toBe(false)
+  })
+
+  it('supports an explicit manual retry by resetting the failed attempt', () => {
+    markAuthFailed()
+    beginManualLogin()
+    expect(getAuthAttemptState()?.status).toBe('started')
+    expect(tryBeginAutomaticLogin()).toBe(false)
+  })
+
+  it('stores logout pending as a non-sensitive sessionStorage flag', () => {
+    markLogoutPending()
+    const value = storage.get('paramita_logout_pending')
+    expect(value).toBeTruthy()
+    expect(value).not.toContain('session')
+    expect(value).not.toContain('code')
+    expect(storage.has('localStorage')).toBe(false)
+  })
+
+  it('consumes logout pending before allowing the post-logout login', () => {
+    markLogoutPending()
+    expect(consumeLogoutPending()).toBe(true)
+    expect(storage.has('paramita_logout_pending')).toBe(false)
+    expect(consumeLogoutPending()).toBe(false)
+  })
+
+  it('allows exactly one automatic login after a logout return', () => {
+    markLogoutPending()
+    expect(consumeLogoutPending()).toBe(true)
+    clearAuthAttempt()
+    expect(tryBeginAutomaticLogin()).toBe(true)
+    expect(tryBeginAutomaticLogin()).toBe(false)
   })
 })
