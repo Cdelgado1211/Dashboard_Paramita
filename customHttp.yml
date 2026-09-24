@@ -1,0 +1,5 @@
+customHeaders:
+  - pattern: '**/*'
+    headers:
+      - key: Content-Security-Policy
+        value: "frame-ancestors 'self' https://portal.danaconnect.com https://console.danaconnect.com;"
