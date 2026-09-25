@@ -7,7 +7,7 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { createSilentAuthFrame, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, removeSilentAuthFrame } from './embeddedAuth'
+import { buildAuthLoginUrl, createSilentAuthFrame, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, removeSilentAuthFrame } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
@@ -230,6 +230,11 @@ describe('BFF auth flow', () => {
     browserWindow.top = {}
     expect(isEmbeddedContext()).toBe(true)
     expect(location.href).toBe('')
+  })
+
+  it('builds silent login only for embedded navigation', () => {
+    expect(buildAuthLoginUrl('https://qa-api.example.com', true)).toBe('https://qa-api.example.com/auth/login?silent=true')
+    expect(buildAuthLoginUrl('https://qa-api.example.com', false)).toBe('https://qa-api.example.com/auth/login')
   })
 
   it('opens DANA authentication in a popup only when explicitly requested', () => {

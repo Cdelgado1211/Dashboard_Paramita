@@ -5,6 +5,10 @@ export type EmbeddedAuthMessage =
   | { type: 'authCode'; authCode: string }
   | { type: 'silentFailure'; error: string }
 
+export function buildAuthLoginUrl(baseUrl: string, embedded: boolean): string {
+  return `${baseUrl}/auth/login${embedded ? '?silent=true' : ''}`
+}
+
 export function isEmbeddedContext(): boolean {
   const params = new URLSearchParams(window.location.search)
   try {
