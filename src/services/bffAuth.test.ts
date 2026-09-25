@@ -7,11 +7,12 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
+import { getAuthCodeFromMessage, handoffAuthCodeToOpener, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE } from './embeddedAuth'
 
 const storage = new Map<string, string>()
-const location = { hash: '', pathname: '/', search: '', href: '' }
+const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
 const history = { state: null, replaceState: vi.fn() }
-const browserWindow = { location, history, dispatchEvent: vi.fn() }
+const browserWindow: Record<string, unknown> = { location, history, dispatchEvent: vi.fn(), self: null, top: null, opener: null, open: vi.fn(), close: vi.fn() }
 
 beforeEach(() => {
   storage.clear()
@@ -23,7 +24,13 @@ beforeEach(() => {
   clearAuthAttempt()
   clearLogoutPending()
   location.hash = ''
+  location.search = ''
   location.href = ''
+  browserWindow.self = browserWindow
+  browserWindow.top = browserWindow
+  browserWindow.opener = null
+  browserWindow.open = vi.fn()
+  browserWindow.close = vi.fn()
   history.replaceState.mockReset()
 })
 
@@ -211,5 +218,52 @@ describe('BFF auth flow', () => {
     clearAuthAttempt()
     expect(tryBeginAutomaticLogin()).toBe(true)
     expect(tryBeginAutomaticLogin()).toBe(false)
+  })
+
+  it('detects direct and embedded contexts without changing the direct URL', () => {
+    expect(isEmbeddedContext()).toBe(false)
+    location.search = '?embedded=true&lang=EN'
+    expect(isEmbeddedContext()).toBe(true)
+    location.search = ''
+    browserWindow.self = {}
+    browserWindow.top = {}
+    expect(isEmbeddedContext()).toBe(true)
+    expect(location.href).toBe('')
+  })
+
+  it('opens DANA authentication in a popup only when explicitly requested', () => {
+    const popup = { closed: false } as Window
+    const open = vi.fn().mockReturnValue(popup)
+    browserWindow.open = open
+    expect(openDanaAuthPopup('https://qa-api.example.com/auth/login')).toBe(popup)
+    expect(open).toHaveBeenCalledWith('https://qa-api.example.com/auth/login', 'paramita-dana-auth', 'popup,width=600,height=750')
+    expect(location.href).toBe('')
+  })
+
+  it('returns null when the browser blocks the authentication popup', () => {
+    browserWindow.open = vi.fn().mockReturnValue(null)
+    expect(openDanaAuthPopup('https://qa-api.example.com/auth/login')).toBeNull()
+  })
+
+  it('relays an auth code from a popup to its opener without finalizing locally', () => {
+    const postMessage = vi.fn()
+    browserWindow.opener = { postMessage }
+    expect(handoffAuthCodeToOpener('one-time-code')).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'one-time-code' }, 'https://qa.d1jxb89in36d10.amplifyapp.com')
+    expect(browserWindow.close).toHaveBeenCalledTimes(1)
+    expect(storage.has('paramita_session')).toBe(false)
+  })
+
+  it('accepts a single valid auth-code message from the known popup only', () => {
+    const popup = {} as Window
+    const validEvent = {
+      origin: 'https://qa.d1jxb89in36d10.amplifyapp.com',
+      source: popup,
+      data: { type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'one-time-code' },
+    } as MessageEvent
+    expect(getAuthCodeFromMessage(validEvent, popup)).toBe('one-time-code')
+    expect(getAuthCodeFromMessage({ ...validEvent, origin: 'https://console.danaconnect-qa.com' } as MessageEvent, popup)).toBeNull()
+    expect(getAuthCodeFromMessage({ ...validEvent, source: {} } as MessageEvent, popup)).toBeNull()
+    expect(getAuthCodeFromMessage({ ...validEvent, data: { type: PARAMITA_AUTH_CODE_MESSAGE, authCode: '' } } as MessageEvent, popup)).toBeNull()
   })
 })

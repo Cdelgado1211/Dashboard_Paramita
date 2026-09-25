@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthSessionError, finalizeAuthCode, getAuthSession } from '../services/authApi'
 import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
 import { beginManualLogin, clearAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin } from '../services/authAttemptStore'
+import { getAuthCodeFromMessage, handoffAuthCodeToOpener, isEmbeddedContext, openDanaAuthPopup } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
 import { SESSION_EXPIRED_EVENT } from '../services/sessionEvents'
@@ -11,17 +12,28 @@ import { useSessionWebSocket } from '../hooks/useSessionWebSocket'
 import App from '../App'
 import '../auth.css'
 
-function AuthError({ message, onRetry }: { message: string; onRetry: () => void }) {
+type LoginHandler = () => void
+
+function AuthError({ message, onRetry }: { message: string; onRetry: LoginHandler }) {
   return <main className="auth-state"><section><h1>No fue posible validar la sesión</h1><p>{message}</p><button onClick={onRetry}>Reintentar</button></section></main>
 }
 
-function startManualLogin() { beginManualLogin(); const baseUrl = getApiBaseUrl(); if (baseUrl) window.location.href = `${baseUrl}/auth/login` }
-function LoginRequired() { return <main className="auth-state"><section><h1>Acceso requerido</h1><p>Debes iniciar sesión para acceder al dashboard.</p><button onClick={startManualLogin}>Iniciar sesión</button></section></main> }
-function AuthenticationFailed() { return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>Puedes intentar iniciar sesión nuevamente.</p><button onClick={startManualLogin}>Reintentar inicio de sesión</button></section></main> }
+function LoginRequired({ onLogin }: { onLogin: LoginHandler }) {
+  return <main className="auth-state"><section><h1>Acceso requerido</h1><p>Debes iniciar sesión para acceder al dashboard.</p><button onClick={onLogin}>Iniciar sesión</button></section></main>
+}
+
+function AuthenticationFailed({ onLogin }: { onLogin: LoginHandler }) {
+  return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>Puedes intentar iniciar sesión nuevamente.</p><button onClick={onLogin}>Reintentar inicio de sesión</button></section></main>
+}
+
+function EmbeddedLoginPrompt({ onLogin, error }: { onLogin: LoginHandler; error: string | null }) {
+  return <main className="auth-state"><section><h1>Acceso requerido</h1><p>Continúa en una ventana segura de DANA para abrir el dashboard.</p>{error && <p role="alert">{error}</p>}<button onClick={onLogin}>Continuar con DANA</button></section></main>
+}
+
 function Forbidden() { return <main className="auth-state"><section><h1>Acceso no autorizado</h1><p>Tu usuario está autenticado, pero no tiene autorización para acceder a este dashboard.</p></section></main> }
 function FinalizingAuthentication() { return <main className="auth-state"><section><h1>Completando autenticación…</h1><p>Validando tu sesión con Paramita.</p></section></main> }
 
-function AutomaticLoginRedirect({ afterLogout = false }: { afterLogout?: boolean }) {
+function AutomaticLoginRedirect({ afterLogout = false, onLogin }: { afterLogout?: boolean; onLogin: LoginHandler }) {
   const [allowed] = useState(() => {
     if (afterLogout) clearAuthAttempt()
     return tryBeginAutomaticLogin()
@@ -37,13 +49,13 @@ function AutomaticLoginRedirect({ afterLogout = false }: { afterLogout?: boolean
 
   if (!allowed) {
     markAuthFailed()
-    return <AuthenticationFailed />
+    return <AuthenticationFailed onLogin={onLogin} />
   }
-  if (!baseUrl) return <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={startManualLogin} />
+  if (!baseUrl) return <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={onLogin} />
   return <FinalizingAuthentication />
 }
 
-function AuthCallback() {
+function AuthCallback({ onLogin }: { onLogin: LoginHandler }) {
   const params = new URLSearchParams(window.location.search)
   const error = params.get('error')
   const description = params.get('error_description')
@@ -62,8 +74,8 @@ function AuthCallback() {
     window.location.replace(`${baseUrl}/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
   }, [baseUrl, code, error, state])
 
-  if (error) return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>{description || 'El inicio de sesión fue cancelado o rechazado.'}</p><button onClick={startManualLogin}>Intentar nuevamente</button></section></main>
-  if (!code || !state) return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>La respuesta de DANA no contiene los parámetros esperados.</p><button onClick={startManualLogin}>Intentar nuevamente</button></section></main>
+  if (error) return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>{description || 'El inicio de sesión fue cancelado o rechazado.'}</p><button onClick={onLogin}>Intentar nuevamente</button></section></main>
+  if (!code || !state) return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>La respuesta de DANA no contiene los parámetros esperados.</p><button onClick={onLogin}>Intentar nuevamente</button></section></main>
   if (!baseUrl) return <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={() => window.location.reload()} />
   return <FinalizingAuthentication />
 }
@@ -71,6 +83,10 @@ function AuthCallback() {
 export function AuthGate() {
   const queryClient = useQueryClient()
   const path = window.location.pathname.replace(/\/+$/, '') || '/'
+  const [embedded] = useState(isEmbeddedContext)
+  const [popupError, setPopupError] = useState<string | null>(null)
+  const popupRef = useRef<Window | null>(null)
+  const processedCodeRef = useRef<string | null>(null)
   const [authFragment] = useState(() => ({ present: hasAuthCodeFragment(), code: consumeAuthCodeFromHash() }))
   const [logoutReturn] = useState(() => {
     const pending = consumeLogoutPending()
@@ -80,20 +96,69 @@ export function AuthGate() {
   const authCode = authFragment.code
   const [finalizeState, setFinalizeState] = useState<'idle' | 'pending' | 'success' | 'error'>(() => authFragment.present ? authCode ? 'pending' : 'error' : 'idle')
 
-  useEffect(() => {
-    if (!authCode) return
-    let active = true
-    void finalizeAuthCode(authCode).then(() => {
-      if (!active) return
+  const startLogin = useCallback(() => {
+    const baseUrl = getApiBaseUrl()
+    if (!baseUrl) {
+      setPopupError('Falta configurar VITE_API_URL en el frontend.')
+      return
+    }
+
+    beginManualLogin()
+    if (!embedded) {
+      window.location.href = `${baseUrl}/auth/login`
+      return
+    }
+
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.focus()
+      return
+    }
+    const popup = openDanaAuthPopup(`${baseUrl}/auth/login`)
+    if (!popup) {
+      markAuthFailed()
+      setPopupError('El navegador bloqueó la ventana de inicio de sesión. Permite las ventanas emergentes e inténtalo nuevamente.')
+      return
+    }
+    popupRef.current = popup
+    setPopupError(null)
+  }, [embedded])
+
+  const completeAuthentication = useCallback((code: string) => {
+    if (processedCodeRef.current) return
+    processedCodeRef.current = code
+    setFinalizeState('pending')
+    void finalizeAuthCode(code).then(() => {
+      markAuthSucceeded()
       setFinalizeState('success')
       void queryClient.invalidateQueries({ queryKey: ['paramita-session'] })
     }).catch(() => {
       clearSessionId()
       markAuthFailed()
-      if (active) setFinalizeState('error')
+      setFinalizeState('error')
     })
-    return () => { active = false }
-  }, [authCode, queryClient])
+  }, [queryClient])
+
+  useEffect(() => {
+    if (!embedded) return
+    const receiveAuthCode = (event: MessageEvent) => {
+      const code = getAuthCodeFromMessage(event, popupRef.current)
+      if (!code) return
+      popupRef.current = null
+      completeAuthentication(code)
+    }
+    window.addEventListener('message', receiveAuthCode)
+    return () => {
+      window.removeEventListener('message', receiveAuthCode)
+      if (popupRef.current && !popupRef.current.closed) popupRef.current.close()
+      popupRef.current = null
+    }
+  }, [completeAuthentication, embedded])
+
+  useEffect(() => {
+    if (!authCode) return
+    if (window.opener && handoffAuthCodeToOpener(authCode)) return
+    completeAuthentication(authCode)
+  }, [authCode, completeAuthentication])
 
   useEffect(() => {
     if (authFragment.present && !authCode) markAuthFailed()
@@ -137,11 +202,11 @@ export function AuthGate() {
   }, [path, queryClient])
 
   if (path === '/auth/login') {
-    return <AutomaticLoginRedirect />
+    return embedded ? <EmbeddedLoginPrompt onLogin={startLogin} error={popupError} /> : <AutomaticLoginRedirect onLogin={startLogin} />
   }
-  if (path === '/auth/callback') return <AuthCallback />
+  if (path === '/auth/callback') return <AuthCallback onLogin={startLogin} />
   if (authFragment.present && finalizeState === 'pending') return <FinalizingAuthentication />
-  if (authFragment.present && finalizeState === 'error') return <AuthenticationFailed />
+  if (authFragment.present && finalizeState === 'error') return <AuthenticationFailed onLogin={startLogin} />
   if (session.isPending) return <main className="auth-state"><section><h1>Validando sesión…</h1><p>Conectando con DANA.</p></section></main>
   if (session.isError) {
     const error = session.error as AuthSessionError
@@ -149,8 +214,9 @@ export function AuthGate() {
     return <AuthError message="No fue posible validar la sesión." onRetry={() => void session.refetch()} />
   }
   if (!session.data?.authenticated) {
-    if (logoutReturn) return <AutomaticLoginRedirect afterLogout />
-    return <AutomaticLoginRedirect />
+    if (embedded) return <EmbeddedLoginPrompt onLogin={startLogin} error={popupError} />
+    if (logoutReturn) return <AutomaticLoginRedirect afterLogout onLogin={startLogin} />
+    return <AutomaticLoginRedirect onLogin={startLogin} />
   }
 
   markAuthSucceeded()
