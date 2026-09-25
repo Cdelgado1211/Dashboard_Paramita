@@ -7,7 +7,7 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { getAuthCodeFromMessage, handoffAuthCodeToOpener, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE } from './embeddedAuth'
+import { createSilentAuthFrame, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, removeSilentAuthFrame } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
@@ -28,6 +28,7 @@ beforeEach(() => {
   location.href = ''
   browserWindow.self = browserWindow
   browserWindow.top = browserWindow
+  browserWindow.parent = browserWindow
   browserWindow.opener = null
   browserWindow.open = vi.fn()
   browserWindow.close = vi.fn()
@@ -265,5 +266,52 @@ describe('BFF auth flow', () => {
     expect(getAuthCodeFromMessage({ ...validEvent, origin: 'https://console.danaconnect-qa.com' } as MessageEvent, popup)).toBeNull()
     expect(getAuthCodeFromMessage({ ...validEvent, source: {} } as MessageEvent, popup)).toBeNull()
     expect(getAuthCodeFromMessage({ ...validEvent, data: { type: PARAMITA_AUTH_CODE_MESSAGE, authCode: '' } } as MessageEvent, popup)).toBeNull()
+  })
+
+  it('creates one hidden silent authentication iframe and removes it when completed', () => {
+    const frame = {
+      src: '',
+      style: { display: '' },
+      setAttribute: vi.fn(),
+      remove: vi.fn(),
+    } as unknown as HTMLIFrameElement
+    const appendChild = vi.fn()
+    vi.stubGlobal('document', { title: 'Paramita', createElement: vi.fn().mockReturnValue(frame), body: { appendChild } })
+    const result = createSilentAuthFrame('https://qa-api.example.com/auth/login?silent=true')
+    expect(result).toBe(frame)
+    expect(frame.src).toBe('https://qa-api.example.com/auth/login?silent=true')
+    expect(frame.style.display).toBe('none')
+    expect(appendChild).toHaveBeenCalledWith(frame)
+    removeSilentAuthFrame(frame)
+    expect(frame.remove).toHaveBeenCalledTimes(1)
+  })
+
+  it('relays a silent iframe auth code to its parent without storing a session locally', () => {
+    const postMessage = vi.fn()
+    browserWindow.parent = { postMessage }
+    expect(handoffAuthCodeToContainer('silent-one-time-code')).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'silent-one-time-code' }, location.origin)
+    expect(getSessionId()).toBeNull()
+  })
+
+  it('relays only safe silent-auth errors to the parent', () => {
+    const postMessage = vi.fn()
+    browserWindow.parent = { postMessage }
+    expect(handoffSilentAuthFailureToParent('login_required')).toBe(true)
+    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'login_required' }, location.origin)
+    expect(handoffSilentAuthFailureToParent('sensitive backend detail')).toBe(true)
+    expect(postMessage).toHaveBeenLastCalledWith({ type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'silent_auth_failed' }, location.origin)
+  })
+
+  it('accepts silent failures only from the expected iframe and same origin', () => {
+    const silentFrame = {} as Window
+    const event = {
+      origin: location.origin,
+      source: silentFrame,
+      data: { type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'login_required' },
+    } as MessageEvent
+    expect(getEmbeddedAuthMessage(event, silentFrame)).toEqual({ type: 'silentFailure', error: 'login_required' })
+    expect(getEmbeddedAuthMessage({ ...event, origin: 'https://other.example.com' } as MessageEvent, silentFrame)).toBeNull()
+    expect(getEmbeddedAuthMessage({ ...event, source: {} } as MessageEvent, silentFrame)).toBeNull()
   })
 })

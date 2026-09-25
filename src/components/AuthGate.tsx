@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthSessionError, finalizeAuthCode, getAuthSession } from '../services/authApi'
 import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
 import { beginManualLogin, clearAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin } from '../services/authAttemptStore'
-import { getAuthCodeFromMessage, handoffAuthCodeToOpener, isEmbeddedContext, openDanaAuthPopup } from '../services/embeddedAuth'
+import { createSilentAuthFrame, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, removeSilentAuthFrame } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
 import { SESSION_EXPIRED_EVENT } from '../services/sessionEvents'
@@ -66,6 +66,7 @@ function AuthCallback({ onLogin }: { onLogin: LoginHandler }) {
 
   useEffect(() => {
     if (error || !code || !state) {
+      if (error && handoffSilentAuthFailureToParent(error)) return
       markAuthFailed()
       return
     }
@@ -85,7 +86,11 @@ export function AuthGate() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/'
   const [embedded] = useState(isEmbeddedContext)
   const [popupError, setPopupError] = useState<string | null>(null)
+  const [embeddedAuthState, setEmbeddedAuthState] = useState<'idle' | 'silent' | 'popup' | 'fallback'>('idle')
   const popupRef = useRef<Window | null>(null)
+  const silentFrameRef = useRef<HTMLIFrameElement | null>(null)
+  const silentAttemptedRef = useRef(false)
+  const automaticPopupAttemptedRef = useRef(false)
   const processedCodeRef = useRef<string | null>(null)
   const [authFragment] = useState(() => ({ present: hasAuthCodeFragment(), code: consumeAuthCodeFromHash() }))
   const [logoutReturn] = useState(() => {
@@ -120,8 +125,35 @@ export function AuthGate() {
       return
     }
     popupRef.current = popup
+    setEmbeddedAuthState('popup')
     setPopupError(null)
   }, [embedded])
+
+  const clearSilentFrame = useCallback(() => {
+    removeSilentAuthFrame(silentFrameRef.current)
+    silentFrameRef.current = null
+  }, [])
+
+  const startAutomaticPopup = useCallback(() => {
+    if (automaticPopupAttemptedRef.current) return
+    automaticPopupAttemptedRef.current = true
+    const baseUrl = getApiBaseUrl()
+    if (!baseUrl) {
+      markAuthFailed()
+      setPopupError('Falta configurar VITE_API_URL en el frontend.')
+      setEmbeddedAuthState('fallback')
+      return
+    }
+    const popup = openDanaAuthPopup(`${baseUrl}/auth/login`)
+    if (!popup) {
+      markAuthFailed()
+      setPopupError('No se pudo abrir la ventana de DANA. Selecciona “Continuar con DANA” para intentarlo nuevamente.')
+      setEmbeddedAuthState('fallback')
+      return
+    }
+    popupRef.current = popup
+    setEmbeddedAuthState('popup')
+  }, [])
 
   const completeAuthentication = useCallback((code: string) => {
     if (processedCodeRef.current) return
@@ -140,23 +172,32 @@ export function AuthGate() {
 
   useEffect(() => {
     if (!embedded) return
-    const receiveAuthCode = (event: MessageEvent) => {
-      const code = getAuthCodeFromMessage(event, popupRef.current)
-      if (!code) return
-      popupRef.current = null
-      completeAuthentication(code)
+    const receiveEmbeddedAuthMessage = (event: MessageEvent) => {
+      const popupMessage = getEmbeddedAuthMessage(event, popupRef.current)
+      const silentMessage = getEmbeddedAuthMessage(event, silentFrameRef.current?.contentWindow ?? null)
+      const message = popupMessage ?? silentMessage
+      if (!message) return
+      if (message.type === 'authCode') {
+        clearSilentFrame()
+        popupRef.current = null
+        completeAuthentication(message.authCode)
+        return
+      }
+      clearSilentFrame()
+      startAutomaticPopup()
     }
-    window.addEventListener('message', receiveAuthCode)
+    window.addEventListener('message', receiveEmbeddedAuthMessage)
     return () => {
-      window.removeEventListener('message', receiveAuthCode)
+      window.removeEventListener('message', receiveEmbeddedAuthMessage)
       if (popupRef.current && !popupRef.current.closed) popupRef.current.close()
       popupRef.current = null
+      clearSilentFrame()
     }
-  }, [completeAuthentication, embedded])
+  }, [clearSilentFrame, completeAuthentication, embedded, startAutomaticPopup])
 
   useEffect(() => {
     if (!authCode) return
-    if (window.opener && handoffAuthCodeToOpener(authCode)) return
+    if (handoffAuthCodeToContainer(authCode)) return
     completeAuthentication(authCode)
   }, [authCode, completeAuthentication])
 
@@ -176,6 +217,25 @@ export function AuthGate() {
   })
 
   useSessionWebSocket(session.data)
+
+  useEffect(() => {
+    if (!embedded || path !== '/' || session.isPending || session.isError || session.data?.authenticated || finalizeState === 'pending' || silentAttemptedRef.current) return
+    silentAttemptedRef.current = true
+    if (!tryBeginAutomaticLogin()) {
+      markAuthFailed()
+      setEmbeddedAuthState('fallback')
+      return
+    }
+    const baseUrl = getApiBaseUrl()
+    if (!baseUrl) {
+      markAuthFailed()
+      setPopupError('Falta configurar VITE_API_URL en el frontend.')
+      setEmbeddedAuthState('fallback')
+      return
+    }
+    silentFrameRef.current = createSilentAuthFrame(`${baseUrl}/auth/login?silent=true`)
+    setEmbeddedAuthState('silent')
+  }, [embedded, finalizeState, path, session.data?.authenticated, session.isError, session.isPending])
 
   useEffect(() => {
     const handleSessionExpired = () => {
@@ -214,7 +274,10 @@ export function AuthGate() {
     return <AuthError message="No fue posible validar la sesión." onRetry={() => void session.refetch()} />
   }
   if (!session.data?.authenticated) {
-    if (embedded) return <EmbeddedLoginPrompt onLogin={startLogin} error={popupError} />
+    if (embedded) {
+      if (embeddedAuthState === 'fallback') return <EmbeddedLoginPrompt onLogin={startLogin} error={popupError} />
+      return <FinalizingAuthentication />
+    }
     if (logoutReturn) return <AutomaticLoginRedirect afterLogout onLogin={startLogin} />
     return <AutomaticLoginRedirect onLogin={startLogin} />
   }
