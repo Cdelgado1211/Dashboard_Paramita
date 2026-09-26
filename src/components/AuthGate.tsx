@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthSessionError, finalizeAuthCode, getAuthSession } from '../services/authApi'
 import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
 import { beginManualLogin, clearAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin } from '../services/authAttemptStore'
-import { buildAuthLoginUrl, isEmbeddedContext } from '../services/embeddedAuth'
+import { isEmbeddedContext, registerDanaParentDiagnostics } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
 import { SESSION_EXPIRED_EVENT } from '../services/sessionEvents'
@@ -29,6 +29,7 @@ function AuthenticationFailed({ onLogin }: { onLogin?: LoginHandler }) {
 function Forbidden() { return <main className="auth-state"><section><h1>Acceso no autorizado</h1><p>Tu usuario está autenticado, pero no tiene autorización para acceder a este dashboard.</p></section></main> }
 function FinalizingAuthentication() { return <main className="auth-state"><section><h1>Completando autenticación…</h1><p>Validando tu sesión con Paramita.</p></section></main> }
 function SilentAuthenticationFailed() { return <main className="auth-state"><section><h1>No fue posible reutilizar la sesión de DANA.</h1><p>La sesión existente no pudo validarse silenciosamente.</p></section></main> }
+function EmbeddedSessionValidation() { return <main className="auth-state"><section><h1>Validando sesión con DANA…</h1><p>Esperando la respuesta del portal DANA.</p></section></main> }
 
 function startDirectLogin() {
   beginManualLogin()
@@ -51,11 +52,13 @@ function AutomaticLoginRedirect({ afterLogout = false, embedded = false, onLogin
 
   useEffect(() => {
     if (allowed !== true || !baseUrl || redirected.current) return
+    if (embedded) return
     redirected.current = true
-    window.location.replace(buildAuthLoginUrl(baseUrl, embedded))
+    window.location.replace(`${baseUrl}/auth/login`)
   }, [allowed, baseUrl, embedded])
 
   if (allowed === null) return <FinalizingAuthentication />
+  if (embedded) return <EmbeddedSessionValidation />
   if (!allowed) {
     markAuthFailed()
     return embedded ? <SilentAuthenticationFailed /> : <AuthenticationFailed onLogin={onLogin} />
@@ -101,6 +104,11 @@ export function AuthGate() {
   })
   const authCode = authFragment.code
   const [finalizeState, setFinalizeState] = useState<'idle' | 'pending' | 'success' | 'error'>(() => authFragment.present ? authCode ? 'pending' : 'error' : 'idle')
+
+  useEffect(() => {
+    if (!embedded) return
+    return registerDanaParentDiagnostics()
+  }, [embedded])
 
   useEffect(() => {
     if (!authCode) return
@@ -172,8 +180,9 @@ export function AuthGate() {
     return <AuthError message="No fue posible validar la sesión." onRetry={() => void session.refetch()} />
   }
   if (!session.data?.authenticated) {
-    if (logoutReturn) return <AutomaticLoginRedirect afterLogout embedded={embedded} onLogin={startDirectLogin} />
-    return <AutomaticLoginRedirect embedded={embedded} onLogin={startDirectLogin} />
+    if (embedded) return <AutomaticLoginRedirect afterLogout={logoutReturn} embedded onLogin={startDirectLogin} />
+    if (logoutReturn) return <AutomaticLoginRedirect afterLogout onLogin={startDirectLogin} />
+    return <AutomaticLoginRedirect onLogin={startDirectLogin} />
   }
 
   markAuthSucceeded()

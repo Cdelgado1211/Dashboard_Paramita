@@ -1,5 +1,6 @@
 export const PARAMITA_AUTH_CODE_MESSAGE = 'PARAMITA_AUTH_CODE'
 export const PARAMITA_SILENT_AUTH_FAILED_MESSAGE = 'PARAMITA_SILENT_AUTH_FAILED'
+export const DANA_PARENT_ORIGIN = 'https://console.danaconnect-qa.com'
 
 export type EmbeddedAuthMessage =
   | { type: 'authCode'; authCode: string }
@@ -7,6 +8,22 @@ export type EmbeddedAuthMessage =
 
 export function buildAuthLoginUrl(baseUrl: string, embedded: boolean): string {
   return `${baseUrl}/auth/login${embedded ? '?silent=true' : ''}`
+}
+
+export function registerDanaParentDiagnostics(): () => void {
+  const handleMessage = (event: MessageEvent) => {
+    if (event.origin !== DANA_PARENT_ORIGIN) return
+    const data = event.data
+    const type = data && typeof data === 'object' && typeof data.type === 'string' ? data.type : typeof data
+    console.log(`DANA_PARENT_MESSAGE type=${type}`)
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      console.log(`DANA_PARENT_MESSAGE_KEYS=${Object.keys(data).join(',')}`)
+    }
+  }
+
+  window.addEventListener('message', handleMessage)
+  window.parent.postMessage({ type: 'paramita:ready' }, DANA_PARENT_ORIGIN)
+  return () => window.removeEventListener('message', handleMessage)
 }
 
 export function isEmbeddedContext(): boolean {

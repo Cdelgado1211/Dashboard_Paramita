@@ -7,12 +7,12 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { buildAuthLoginUrl, createSilentAuthFrame, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, removeSilentAuthFrame } from './embeddedAuth'
+import { buildAuthLoginUrl, createSilentAuthFrame, DANA_PARENT_ORIGIN, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, registerDanaParentDiagnostics, removeSilentAuthFrame } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
 const history = { state: null, replaceState: vi.fn() }
-const browserWindow: Record<string, unknown> = { location, history, dispatchEvent: vi.fn(), self: null, top: null, opener: null, open: vi.fn(), close: vi.fn() }
+const browserWindow: Record<string, unknown> = { location, history, dispatchEvent: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), postMessage: vi.fn(), self: null, top: null, parent: null, opener: null, open: vi.fn(), close: vi.fn() }
 
 beforeEach(() => {
   storage.clear()
@@ -29,6 +29,9 @@ beforeEach(() => {
   browserWindow.self = browserWindow
   browserWindow.top = browserWindow
   browserWindow.parent = browserWindow
+  browserWindow.postMessage = vi.fn()
+  browserWindow.addEventListener = vi.fn()
+  browserWindow.removeEventListener = vi.fn()
   browserWindow.opener = null
   browserWindow.open = vi.fn()
   browserWindow.close = vi.fn()
@@ -235,6 +238,26 @@ describe('BFF auth flow', () => {
   it('builds silent login only for embedded navigation', () => {
     expect(buildAuthLoginUrl('https://qa-api.example.com', true)).toBe('https://qa-api.example.com/auth/login?silent=true')
     expect(buildAuthLoginUrl('https://qa-api.example.com', false)).toBe('https://qa-api.example.com/auth/login')
+  })
+
+  it('registers the diagnostic parent listener and sends only the ready handshake', () => {
+    const cleanup = registerDanaParentDiagnostics()
+    expect(browserWindow.addEventListener).toHaveBeenCalledWith('message', expect.any(Function))
+    expect(browserWindow.postMessage).toHaveBeenCalledWith({ type: 'paramita:ready' }, DANA_PARENT_ORIGIN)
+    cleanup()
+    expect(browserWindow.removeEventListener).toHaveBeenCalledWith('message', expect.any(Function))
+  })
+
+  it('logs only type and object keys for messages from the approved parent origin', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const cleanup = registerDanaParentDiagnostics()
+    const listener = (browserWindow.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0][1] as (event: MessageEvent) => void
+    listener({ origin: 'https://other.example.com', data: { type: 'ignored', token: 'secret' } } as MessageEvent)
+    expect(log).toHaveBeenCalledTimes(0)
+    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'ready', token: 'secret', user: 'private' } } as MessageEvent)
+    expect(log).toHaveBeenNthCalledWith(1, 'DANA_PARENT_MESSAGE type=ready')
+    expect(log).toHaveBeenNthCalledWith(2, 'DANA_PARENT_MESSAGE_KEYS=type,token,user')
+    cleanup()
   })
 
   it('opens DANA authentication in a popup only when explicitly requested', () => {
