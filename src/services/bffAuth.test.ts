@@ -255,8 +255,10 @@ describe('BFF auth flow', () => {
     listener({ origin: 'https://other.example.com', data: { type: 'ignored', token: 'secret' } } as MessageEvent)
     expect(log).toHaveBeenCalledTimes(0)
     listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'ready', token: 'secret', user: 'private' } } as MessageEvent)
-    expect(log).toHaveBeenNthCalledWith(1, 'DANA_PARENT_MESSAGE type=ready')
-    expect(log).toHaveBeenNthCalledWith(2, 'DANA_PARENT_MESSAGE_KEYS=type,token,user')
+    expect(log).toHaveBeenNthCalledWith(1, 'ORIGIN:', DANA_PARENT_ORIGIN)
+    expect(log).toHaveBeenNthCalledWith(2, 'TYPE:', 'ready')
+    expect(log).toHaveBeenNthCalledWith(3, 'DATA:', { type: 'ready', token: 'secret', user: 'private' })
+    expect(log).toHaveBeenNthCalledWith(4, 'DANA_PARENT_MESSAGE_KEYS=type,token,user')
     cleanup()
   })
 

@@ -15,7 +15,9 @@ export function registerDanaParentDiagnostics(): () => void {
     if (event.origin !== DANA_PARENT_ORIGIN) return
     const data = event.data
     const type = data && typeof data === 'object' && typeof data.type === 'string' ? data.type : typeof data
-    console.log(`DANA_PARENT_MESSAGE type=${type}`)
+    console.log('ORIGIN:', event.origin)
+    console.log('TYPE:', type)
+    console.log('DATA:', data)
     if (data && typeof data === 'object' && !Array.isArray(data)) {
       console.log(`DANA_PARENT_MESSAGE_KEYS=${Object.keys(data).join(',')}`)
     }
