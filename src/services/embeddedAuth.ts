@@ -7,6 +7,14 @@ export function isEmbeddedContext(): boolean {
   return params.get('embedded') === 'true'
 }
 
+export function isRunningInsideIframe(): boolean {
+  try {
+    return window.self !== window.top
+  } catch {
+    return true
+  }
+}
+
 export function registerDanaUiEvents(): () => void {
   const handleMessage = (event: MessageEvent) => {
     if (event.origin !== DANA_PARENT_ORIGIN) return

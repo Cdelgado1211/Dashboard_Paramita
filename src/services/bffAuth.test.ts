@@ -7,7 +7,7 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, getAuthAttemptState, hasEmbeddedAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { DANA_PARENT_ORIGIN, isEmbeddedContext, registerDanaUiEvents } from './embeddedAuth'
+import { DANA_PARENT_ORIGIN, isEmbeddedContext, isRunningInsideIframe, registerDanaUiEvents } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
@@ -286,6 +286,15 @@ describe('BFF auth flow', () => {
     browserWindow.self = {}
     browserWindow.top = {}
     expect(isEmbeddedContext()).toBe(false)
+  })
+
+  it('detects the real iframe context independently from the embedded query parameter', () => {
+    expect(isRunningInsideIframe()).toBe(false)
+    location.search = '?embedded=true'
+    expect(isRunningInsideIframe()).toBe(false)
+    browserWindow.self = {}
+    browserWindow.top = {}
+    expect(isRunningInsideIframe()).toBe(true)
   })
 
   it('starts embedded authentication only once until it succeeds or is cleared', () => {
