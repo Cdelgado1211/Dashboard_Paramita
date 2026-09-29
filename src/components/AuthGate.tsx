@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthSessionError, finalizeAuthCode, getAuthSession } from '../services/authApi'
 import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
-import { beginManualLogin, clearAuthAttempt, clearSilentAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin, tryBeginSilentAuth } from '../services/authAttemptStore'
+import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from '../services/authAttemptStore'
 import { buildAuthLoginUrl, isEmbeddedContext, registerDanaUiEvents } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
@@ -28,8 +28,8 @@ function AuthenticationFailed({ onLogin }: { onLogin?: LoginHandler }) {
 
 function Forbidden() { return <main className="auth-state"><section><h1>Acceso no autorizado</h1><p>Tu usuario está autenticado, pero no tiene autorización para acceder a este dashboard.</p></section></main> }
 function FinalizingAuthentication() { return <main className="auth-state"><section><h1>Completando autenticación…</h1><p>Validando tu sesión con Paramita.</p></section></main> }
-function SilentAuthenticationFailed() { return <main className="auth-state"><section><h1>No fue posible reutilizar la sesión de DANA.</h1><p>La sesión existente no pudo validarse silenciosamente.</p></section></main> }
-function EmbeddedSessionValidation() { return <main className="auth-state"><section><h1>Validando sesión con DANA…</h1><p>Iniciando validación silenciosa de la sesión.</p></section></main> }
+function EmbeddedAuthenticationFailed() { return <main className="auth-state"><section><h1>No fue posible validar automáticamente la sesión de DANA.</h1><p>La autenticación embebida no pudo completarse.</p></section></main> }
+function EmbeddedSessionValidation() { return <main className="auth-state"><section><h1>Validando sesión con DANA…</h1><p>Iniciando autenticación con DANA.</p></section></main> }
 
 function startDirectLogin() {
   beginManualLogin()
@@ -48,23 +48,23 @@ function AutomaticLoginRedirect({ afterLogout = false, embedded = false, onLogin
     initialized.current = true
     if (afterLogout) {
       clearAuthAttempt()
-      clearSilentAuthAttempt()
+      clearEmbeddedAuthAttempt()
     }
-    setAllowed(embedded ? tryBeginSilentAuth() : tryBeginAutomaticLogin())
+    setAllowed(embedded ? tryBeginEmbeddedAuth() : tryBeginAutomaticLogin())
   }, [afterLogout, embedded])
 
   useEffect(() => {
     if (allowed !== true || !baseUrl || redirected.current) return
     redirected.current = true
-    window.location.assign(buildAuthLoginUrl(baseUrl, embedded))
+    window.location.assign(buildAuthLoginUrl(baseUrl))
   }, [allowed, baseUrl, embedded])
 
   if (allowed === null) return <FinalizingAuthentication />
   if (!allowed) {
     markAuthFailed()
-    return embedded ? <SilentAuthenticationFailed /> : <AuthenticationFailed onLogin={onLogin} />
+    return embedded ? <EmbeddedAuthenticationFailed /> : <AuthenticationFailed onLogin={onLogin} />
   }
-  if (!baseUrl) return embedded ? <SilentAuthenticationFailed /> : <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={onLogin} />
+  if (!baseUrl) return embedded ? <EmbeddedAuthenticationFailed /> : <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={onLogin} />
   if (embedded) return <EmbeddedSessionValidation />
   return <FinalizingAuthentication />
 }
@@ -88,7 +88,7 @@ function AuthCallback({ embedded, onLogin }: { embedded: boolean; onLogin: Login
     window.location.replace(`${baseUrl}/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`)
   }, [baseUrl, code, error, state])
 
-  if (error) return embedded ? <SilentAuthenticationFailed /> : <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>{description || 'El inicio de sesión fue cancelado o rechazado.'}</p><button onClick={onLogin}>Intentar nuevamente</button></section></main>
+  if (error) return embedded ? <EmbeddedAuthenticationFailed /> : <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>{description || 'El inicio de sesión fue cancelado o rechazado.'}</p><button onClick={onLogin}>Intentar nuevamente</button></section></main>
   if (!code || !state) return <main className="auth-state"><section><h1>No fue posible completar la autenticación.</h1><p>La respuesta de DANA no contiene los parámetros esperados.</p><button onClick={onLogin}>Intentar nuevamente</button></section></main>
   if (!baseUrl) return <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={() => window.location.reload()} />
   return <FinalizingAuthentication />
@@ -118,7 +118,7 @@ export function AuthGate() {
     void finalizeAuthCode(authCode).then(() => {
       if (!active) return
       markAuthSucceeded()
-      clearSilentAuthAttempt()
+      clearEmbeddedAuthAttempt()
       setFinalizeState('success')
       void queryClient.invalidateQueries({ queryKey: ['paramita-session'] })
     }).catch(() => {
@@ -189,6 +189,6 @@ export function AuthGate() {
   }
 
   markAuthSucceeded()
-  clearSilentAuthAttempt()
+  clearEmbeddedAuthAttempt()
   return <App />
 }

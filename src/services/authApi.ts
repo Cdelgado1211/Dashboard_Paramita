@@ -1,5 +1,6 @@
 import { requestJson, ParamitaApiError } from './apiClient'
 import { getApiBaseUrl } from './apiConfig'
+import { clearEmbeddedAuthAttempt } from './authAttemptStore'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 
 export interface AuthSession {
@@ -49,6 +50,7 @@ export function finalizeAuthCode(authCode: string): Promise<FinalizeResponse> {
       throw new AuthSessionError(0, 'No fue posible completar la autenticación.')
     }
     setSessionId(response.sessionId)
+    clearEmbeddedAuthAttempt()
     return response
   }).catch(error => {
     clearSessionId()

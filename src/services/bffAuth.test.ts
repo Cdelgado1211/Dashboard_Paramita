@@ -5,7 +5,7 @@ import { requestJson } from './apiClient'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
-import { beginManualLogin, clearAuthAttempt, clearSilentAuthAttempt, getAuthAttemptState, hasSilentAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginSilentAuth } from './authAttemptStore'
+import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, getAuthAttemptState, hasEmbeddedAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
 import { buildAuthLoginUrl, DANA_PARENT_ORIGIN, isEmbeddedContext, registerDanaUiEvents } from './embeddedAuth'
 
@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.stubGlobal('window', browserWindow)
   vi.stubGlobal('document', { title: 'Paramita' })
   clearAuthAttempt()
-  clearSilentAuthAttempt()
+  clearEmbeddedAuthAttempt()
   clearLogoutPending()
   location.hash = ''
   location.search = ''
@@ -55,13 +55,15 @@ describe('BFF auth flow', () => {
     expect(storage.has('auth_code')).toBe(false)
   })
 
-  it('finalizes an authCode once and stores only the sessionId', async () => {
+  it('finalizes an authCode once, stores only the sessionId, and clears the embedded attempt', async () => {
+    tryBeginEmbeddedAuth()
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ sessionId: 'opaque-session', expiresIn: 3600 }))
     vi.stubGlobal('fetch', fetchMock)
     await Promise.all([finalizeAuthCode('code-once'), finalizeAuthCode('code-once')])
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/finalize', expect.objectContaining({ method: 'POST', body: JSON.stringify({ authCode: 'code-once' }) }))
     expect(getSessionId()).toBe('opaque-session')
+    expect(hasEmbeddedAuthAttempted()).toBe(false)
     expect(storage.has('code-once')).toBe(false)
   })
 
@@ -235,17 +237,17 @@ describe('BFF auth flow', () => {
     expect(isEmbeddedContext()).toBe(false)
   })
 
-  it('builds interactive standalone and silent embedded login URLs', () => {
-    expect(buildAuthLoginUrl('https://qa-api.example.com', false)).toBe('https://qa-api.example.com/auth/login')
-    expect(buildAuthLoginUrl('https://qa-api.example.com', true)).toBe('https://qa-api.example.com/auth/login?silent=true')
+  it('builds the same interactive login URL for standalone and embedded flows', () => {
+    expect(buildAuthLoginUrl('https://qa-api.example.com')).toBe('https://qa-api.example.com/auth/login')
+    expect(buildAuthLoginUrl('https://qa-api.example.com')).not.toContain('silent=true')
   })
 
-  it('starts silent authentication only once until it succeeds or is cleared', () => {
-    expect(tryBeginSilentAuth()).toBe(true)
-    expect(hasSilentAuthAttempted()).toBe(true)
-    expect(tryBeginSilentAuth()).toBe(false)
-    clearSilentAuthAttempt()
-    expect(tryBeginSilentAuth()).toBe(true)
+  it('starts embedded authentication only once until it succeeds or is cleared', () => {
+    expect(tryBeginEmbeddedAuth()).toBe(true)
+    expect(hasEmbeddedAuthAttempted()).toBe(true)
+    expect(tryBeginEmbeddedAuth()).toBe(false)
+    clearEmbeddedAuthAttempt()
+    expect(tryBeginEmbeddedAuth()).toBe(true)
   })
 
   it('registers only approved DANA UI event types from the configured origin', () => {
