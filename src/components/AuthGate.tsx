@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { AuthSessionError, finalizeAuthCode, getAuthSession } from '../services/authApi'
+import { AuthSessionError, finalizeAuthCode, getAuthSession, prepareAuthorizationUrl } from '../services/authApi'
 import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
 import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from '../services/authAttemptStore'
-import { buildAuthLoginUrl, isEmbeddedContext, registerDanaUiEvents } from '../services/embeddedAuth'
+import { isEmbeddedContext, registerDanaUiEvents } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
 import { SESSION_EXPIRED_EVENT } from '../services/sessionEvents'
@@ -33,12 +33,16 @@ function EmbeddedSessionValidation() { return <main className="auth-state"><sect
 
 function startDirectLogin() {
   beginManualLogin()
-  const baseUrl = getApiBaseUrl()
-  if (baseUrl) window.location.href = `${baseUrl}/auth/login`
+  void prepareAuthorizationUrl().then(authorizationUrl => {
+    window.location.assign(authorizationUrl)
+  }).catch(() => {
+    markAuthFailed()
+  })
 }
 
 function AutomaticLoginRedirect({ afterLogout = false, embedded = false, onLogin }: { afterLogout?: boolean; embedded?: boolean; onLogin: LoginHandler }) {
   const [allowed, setAllowed] = useState<boolean | null>(null)
+  const [prepareFailed, setPrepareFailed] = useState(false)
   const initialized = useRef(false)
   const redirected = useRef(false)
   const baseUrl = getApiBaseUrl()
@@ -56,7 +60,12 @@ function AutomaticLoginRedirect({ afterLogout = false, embedded = false, onLogin
   useEffect(() => {
     if (allowed !== true || !baseUrl || redirected.current) return
     redirected.current = true
-    window.location.assign(buildAuthLoginUrl(baseUrl))
+    void prepareAuthorizationUrl().then(authorizationUrl => {
+      window.location.assign(authorizationUrl)
+    }).catch(() => {
+      markAuthFailed()
+      setPrepareFailed(true)
+    })
   }, [allowed, baseUrl, embedded])
 
   if (allowed === null) return <FinalizingAuthentication />
@@ -64,6 +73,7 @@ function AutomaticLoginRedirect({ afterLogout = false, embedded = false, onLogin
     markAuthFailed()
     return embedded ? <EmbeddedAuthenticationFailed /> : <AuthenticationFailed onLogin={onLogin} />
   }
+  if (prepareFailed) return embedded ? <EmbeddedAuthenticationFailed /> : <AuthError message="No fue posible preparar la autenticación." onRetry={onLogin} />
   if (!baseUrl) return embedded ? <EmbeddedAuthenticationFailed /> : <AuthError message="Falta configurar VITE_API_URL en el frontend." onRetry={onLogin} />
   if (embedded) return <EmbeddedSessionValidation />
   return <FinalizingAuthentication />

@@ -2,10 +2,6 @@ export const DANA_PARENT_ORIGIN = 'https://console.danaconnect-qa.com'
 
 const DANA_UI_EVENT_TYPES = new Set(['dana:host', 'dana:visibility', 'lang', 'theme'])
 
-export function buildAuthLoginUrl(baseUrl: string): string {
-  return `${baseUrl}/auth/login`
-}
-
 export function isEmbeddedContext(): boolean {
   const params = new URLSearchParams(window.location.search)
   return params.get('embedded') === 'true'

@@ -1,5 +1,5 @@
 import { requestJson, ParamitaApiError } from './apiClient'
-import { getApiBaseUrl } from './apiConfig'
+import { getApiBaseUrl, getOidcOrigin } from './apiConfig'
 import { clearEmbeddedAuthAttempt } from './authAttemptStore'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 
@@ -16,6 +16,30 @@ export class AuthSessionError extends Error {
     super(message)
     this.name = 'AuthSessionError'
   }
+}
+
+interface PrepareAuthorizationResponse { ok?: boolean; authorizationUrl?: string }
+
+export async function prepareAuthorizationUrl(): Promise<string> {
+  const response = await requestJson<PrepareAuthorizationResponse>('/auth/prepare', { method: 'GET' }, { includeSession: false, notifyUnauthorized: false })
+  if (typeof response.authorizationUrl !== 'string' || !response.authorizationUrl.trim()) {
+    throw new AuthSessionError(0, 'No fue posible preparar la autenticación.')
+  }
+
+  let authorizationUrl: URL
+  let expectedOrigin: URL
+  try {
+    authorizationUrl = new URL(response.authorizationUrl)
+    expectedOrigin = new URL(getOidcOrigin())
+  } catch {
+    throw new AuthSessionError(0, 'La URL de autenticación no es válida.')
+  }
+
+  if (authorizationUrl.protocol !== 'https:' || authorizationUrl.origin !== expectedOrigin.origin) {
+    throw new AuthSessionError(0, 'La URL de autenticación no es válida.')
+  }
+
+  return authorizationUrl.toString()
 }
 
 export async function getAuthSession(): Promise<AuthSession> {

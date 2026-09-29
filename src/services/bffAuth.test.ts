@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { consumeAuthCodeFromHash } from './authFlow'
-import { buildOidcLogoutContinueUrl, finalizeAuthCode, getAuthSession, initiateOidcLogout, localLogout } from './authApi'
+import { buildOidcLogoutContinueUrl, finalizeAuthCode, getAuthSession, initiateOidcLogout, localLogout, prepareAuthorizationUrl } from './authApi'
 import { requestJson } from './apiClient'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, getAuthAttemptState, hasEmbeddedAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { buildAuthLoginUrl, DANA_PARENT_ORIGIN, isEmbeddedContext, registerDanaUiEvents } from './embeddedAuth'
+import { DANA_PARENT_ORIGIN, isEmbeddedContext, registerDanaUiEvents } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
@@ -72,6 +72,31 @@ describe('BFF auth flow', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'invalid' }, 400)))
     await expect(finalizeAuthCode('failed-code')).rejects.toThrow()
     expect(getSessionId()).toBeNull()
+  })
+
+  it('prepares OAuth through the API and returns only a validated DANA authorization URL', async () => {
+    const authorizationUrl = 'https://auth.danaconnect-qa.com/oauth2/authorize?state=opaque-state'
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true, authorizationUrl }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(prepareAuthorizationUrl()).resolves.toBe(authorizationUrl)
+    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/prepare', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock.mock.calls[0][0]).not.toContain('/auth/login')
+  })
+
+  it('rejects an invalid or unexpected authorization URL without navigating', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, authorizationUrl: 'not-a-url' }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, authorizationUrl: 'https://unexpected.example.com/authorize' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(prepareAuthorizationUrl()).rejects.toThrow('La URL de autenticación no es válida.')
+    await expect(prepareAuthorizationUrl()).rejects.toThrow('La URL de autenticación no es válida.')
+    expect(location.href).toBe('')
+  })
+
+  it('surfaces an API error when authorization preparation fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 500)))
+    await expect(prepareAuthorizationUrl()).rejects.toThrow()
+    expect(location.href).toBe('')
   })
 
   it('uses Authorization: Session for /auth/session', async () => {
@@ -235,11 +260,6 @@ describe('BFF auth flow', () => {
     browserWindow.self = {}
     browserWindow.top = {}
     expect(isEmbeddedContext()).toBe(false)
-  })
-
-  it('builds the same interactive login URL for standalone and embedded flows', () => {
-    expect(buildAuthLoginUrl('https://qa-api.example.com')).toBe('https://qa-api.example.com/auth/login')
-    expect(buildAuthLoginUrl('https://qa-api.example.com')).not.toContain('silent=true')
   })
 
   it('starts embedded authentication only once until it succeeds or is cleared', () => {
