@@ -115,6 +115,25 @@ describe('BFF auth flow', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('clears an invalid stored session after /auth/session returns 401', async () => {
+    setSessionId('expired-session')
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 401))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(getAuthSession()).resolves.toEqual({ authenticated: false })
+    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/session', expect.any(Object))
+    expect(getSessionId()).toBeNull()
+  })
+
+  it('validates the session after a successful finalize', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'session-after-finalize', expiresIn: 3600 }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authorized: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    await finalizeAuthCode('fresh-code')
+    await expect(getAuthSession()).resolves.toMatchObject({ authenticated: true, authorized: true })
+    expect(fetchMock.mock.calls[1][0]).toBe('https://qa-api.example.com/auth/session')
+  })
+
   it('uses Authorization: Session for dashboard and order requests', async () => {
     setSessionId('session-456')
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ orders: [] })))

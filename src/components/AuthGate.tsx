@@ -7,7 +7,7 @@ import { isEmbeddedContext, registerDanaUiEvents } from '../services/embeddedAut
 import { consumeLogoutPending } from '../services/logoutState'
 import { getApiBaseUrl } from '../services/apiConfig'
 import { SESSION_EXPIRED_EVENT } from '../services/sessionEvents'
-import { clearSessionId } from '../services/sessionStore'
+import { clearSessionId, getSessionId } from '../services/sessionStore'
 import { useSessionWebSocket } from '../hooks/useSessionWebSocket'
 import App from '../App'
 import '../auth.css'
@@ -115,6 +115,7 @@ export function AuthGate() {
     return pending
   })
   const authCode = authFragment.code
+  const hasStoredSession = Boolean(getSessionId())
   const [finalizeState, setFinalizeState] = useState<'idle' | 'pending' | 'success' | 'error'>(() => authFragment.present ? authCode ? 'pending' : 'error' : 'idle')
 
   useEffect(() => {
@@ -146,7 +147,7 @@ export function AuthGate() {
   const session = useQuery({
     queryKey: ['paramita-session'],
     queryFn: getAuthSession,
-    enabled: path === '/' && (!authFragment.present || finalizeState === 'success') && finalizeState !== 'pending',
+    enabled: hasStoredSession && path === '/' && (!authFragment.present || finalizeState === 'success') && finalizeState !== 'pending',
     retry: false,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -154,7 +155,7 @@ export function AuthGate() {
     refetchOnMount: true,
   })
 
-  useSessionWebSocket(session.data)
+  useSessionWebSocket(hasStoredSession ? session.data : undefined)
 
   useEffect(() => {
     const handleSessionExpired = () => {
@@ -186,17 +187,18 @@ export function AuthGate() {
   if (path === '/auth/callback') return <AuthCallback embedded={embedded} onLogin={startDirectLogin} />
   if (authFragment.present && finalizeState === 'pending') return <FinalizingAuthentication />
   if (authFragment.present && finalizeState === 'error') return <AuthenticationFailed />
+  if (!hasStoredSession) {
+    if (embedded) return <AutomaticLoginRedirect afterLogout={logoutReturn} embedded onLogin={startDirectLogin} />
+    if (logoutReturn) return <AutomaticLoginRedirect afterLogout onLogin={startDirectLogin} />
+    return <AutomaticLoginRedirect onLogin={startDirectLogin} />
+  }
   if (session.isPending) return embedded ? <EmbeddedSessionValidation /> : <main className="auth-state"><section><h1>Validando sesión…</h1><p>Conectando con DANA.</p></section></main>
   if (session.isError) {
     const error = session.error as AuthSessionError
     if (error.status === 403) return <Forbidden />
     return <AuthError message="No fue posible validar la sesión." onRetry={() => void session.refetch()} />
   }
-  if (!session.data?.authenticated) {
-    if (embedded) return <AutomaticLoginRedirect afterLogout={logoutReturn} embedded onLogin={startDirectLogin} />
-    if (logoutReturn) return <AutomaticLoginRedirect afterLogout onLogin={startDirectLogin} />
-    return <AutomaticLoginRedirect onLogin={startDirectLogin} />
-  }
+  if (!session.data?.authenticated) return <AuthenticationFailed onLogin={startDirectLogin} />
 
   markAuthSucceeded()
   clearEmbeddedAuthAttempt()
