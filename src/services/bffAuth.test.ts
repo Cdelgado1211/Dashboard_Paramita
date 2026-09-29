@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { consumeAuthCodeFromHash } from './authFlow'
+import { consumeAuthCodeFromHash, shouldValidateAuthSession } from './authFlow'
 import { buildOidcLogoutContinueUrl, finalizeAuthCode, getAuthSession, initiateOidcLogout, localLogout, prepareAuthorizationUrl } from './authApi'
 import { requestJson } from './apiClient'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
@@ -53,6 +53,12 @@ describe('BFF auth flow', () => {
     consumeAuthCodeFromHash()
     expect(storage.has('paramita_session')).toBe(false)
     expect(storage.has('auth_code')).toBe(false)
+  })
+
+  it('does not validate the session while finalize is pending and enables one validation after success', () => {
+    expect(shouldValidateAuthSession(true, true, 'pending')).toBe(false)
+    expect(shouldValidateAuthSession(false, false, 'idle')).toBe(false)
+    expect(shouldValidateAuthSession(true, true, 'success')).toBe(true)
   })
 
   it('finalizes an authCode once, stores only the sessionId, and clears the embedded attempt', async () => {
@@ -132,6 +138,7 @@ describe('BFF auth flow', () => {
     await finalizeAuthCode('fresh-code')
     await expect(getAuthSession()).resolves.toMatchObject({ authenticated: true, authorized: true })
     expect(fetchMock.mock.calls[1][0]).toBe('https://qa-api.example.com/auth/session')
+    expect(fetchMock.mock.calls.filter(([url]) => url === 'https://qa-api.example.com/auth/session')).toHaveLength(1)
   })
 
   it('uses Authorization: Session for dashboard and order requests', async () => {

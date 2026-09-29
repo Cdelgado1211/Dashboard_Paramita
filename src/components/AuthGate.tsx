@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthSessionError, finalizeAuthCode, getAuthSession, prepareAuthorizationUrl } from '../services/authApi'
-import { consumeAuthCodeFromHash, hasAuthCodeFragment } from '../services/authFlow'
+import { consumeAuthCodeFromHash, hasAuthCodeFragment, shouldValidateAuthSession, type AuthFinalizeState } from '../services/authFlow'
 import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, markAuthFailed, markAuthSucceeded, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from '../services/authAttemptStore'
 import { isEmbeddedContext, registerDanaUiEvents } from '../services/embeddedAuth'
 import { consumeLogoutPending } from '../services/logoutState'
@@ -116,7 +116,7 @@ export function AuthGate() {
   })
   const authCode = authFragment.code
   const hasStoredSession = Boolean(getSessionId())
-  const [finalizeState, setFinalizeState] = useState<'idle' | 'pending' | 'success' | 'error'>(() => authFragment.present ? authCode ? 'pending' : 'error' : 'idle')
+  const [finalizeState, setFinalizeState] = useState<AuthFinalizeState>(() => authFragment.present ? authCode ? 'pending' : 'error' : 'idle')
 
   useEffect(() => {
     if (!embedded) return
@@ -130,8 +130,8 @@ export function AuthGate() {
       if (!active) return
       markAuthSucceeded()
       clearEmbeddedAuthAttempt()
+      queryClient.removeQueries({ queryKey: ['paramita-session'] })
       setFinalizeState('success')
-      void queryClient.invalidateQueries({ queryKey: ['paramita-session'] })
     }).catch(() => {
       clearSessionId()
       markAuthFailed()
@@ -147,7 +147,7 @@ export function AuthGate() {
   const session = useQuery({
     queryKey: ['paramita-session'],
     queryFn: getAuthSession,
-    enabled: hasStoredSession && path === '/' && (!authFragment.present || finalizeState === 'success') && finalizeState !== 'pending',
+    enabled: path === '/' && shouldValidateAuthSession(hasStoredSession, authFragment.present, finalizeState),
     retry: false,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,

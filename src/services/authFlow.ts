@@ -1,3 +1,5 @@
+export type AuthFinalizeState = 'idle' | 'pending' | 'success' | 'error'
+
 export function consumeAuthCodeFromHash(): string | null {
   const hash = window.location.hash
   if (!hash.startsWith('#')) return null
@@ -7,6 +9,10 @@ export function consumeAuthCodeFromHash(): string | null {
 
   window.history.replaceState(window.history.state, document.title, `${window.location.pathname}${window.location.search}`)
   return authCode
+}
+
+export function shouldValidateAuthSession(hasStoredSession: boolean, authFragmentPresent: boolean, finalizeState: AuthFinalizeState): boolean {
+  return hasStoredSession && (!authFragmentPresent || finalizeState === 'success') && finalizeState !== 'pending'
 }
 
 export function hasAuthCodeFragment(): boolean {
