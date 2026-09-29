@@ -5,9 +5,9 @@ import { requestJson } from './apiClient'
 import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
 import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
-import { beginManualLogin, clearAuthAttempt, getAuthAttemptState, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin } from './authAttemptStore'
+import { beginManualLogin, clearAuthAttempt, clearSilentAuthAttempt, getAuthAttemptState, hasSilentAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginSilentAuth } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { buildAuthLoginUrl, createSilentAuthFrame, DANA_PARENT_ORIGIN, getAuthCodeFromMessage, getEmbeddedAuthMessage, handoffAuthCodeToContainer, handoffAuthCodeToOpener, handoffSilentAuthFailureToParent, isEmbeddedContext, openDanaAuthPopup, PARAMITA_AUTH_CODE_MESSAGE, PARAMITA_SILENT_AUTH_FAILED_MESSAGE, registerDanaParentDiagnostics, removeSilentAuthFrame } from './embeddedAuth'
+import { buildAuthLoginUrl, DANA_PARENT_ORIGIN, isEmbeddedContext, registerDanaUiEvents } from './embeddedAuth'
 
 const storage = new Map<string, string>()
 const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.stubGlobal('window', browserWindow)
   vi.stubGlobal('document', { title: 'Paramita' })
   clearAuthAttempt()
+  clearSilentAuthAttempt()
   clearLogoutPending()
   location.hash = ''
   location.search = ''
@@ -224,124 +225,39 @@ describe('BFF auth flow', () => {
     expect(tryBeginAutomaticLogin()).toBe(false)
   })
 
-  it('detects direct and embedded contexts without changing the direct URL', () => {
+  it('detects embedded mode only from the embedded query parameter', () => {
     expect(isEmbeddedContext()).toBe(false)
     location.search = '?embedded=true&lang=EN'
     expect(isEmbeddedContext()).toBe(true)
     location.search = ''
     browserWindow.self = {}
     browserWindow.top = {}
-    expect(isEmbeddedContext()).toBe(true)
-    expect(location.href).toBe('')
+    expect(isEmbeddedContext()).toBe(false)
   })
 
-  it('builds silent login only for embedded navigation', () => {
-    expect(buildAuthLoginUrl('https://qa-api.example.com', true)).toBe('https://qa-api.example.com/auth/login?silent=true')
+  it('builds interactive standalone and silent embedded login URLs', () => {
     expect(buildAuthLoginUrl('https://qa-api.example.com', false)).toBe('https://qa-api.example.com/auth/login')
+    expect(buildAuthLoginUrl('https://qa-api.example.com', true)).toBe('https://qa-api.example.com/auth/login?silent=true')
   })
 
-  it('registers the diagnostic parent listener and sends only the ready handshake', () => {
-    const cleanup = registerDanaParentDiagnostics()
-    expect(browserWindow.addEventListener).toHaveBeenCalledWith('message', expect.any(Function))
-    expect(browserWindow.postMessage).toHaveBeenCalledWith({ type: 'paramita:ready' }, DANA_PARENT_ORIGIN)
+  it('starts silent authentication only once until it succeeds or is cleared', () => {
+    expect(tryBeginSilentAuth()).toBe(true)
+    expect(hasSilentAuthAttempted()).toBe(true)
+    expect(tryBeginSilentAuth()).toBe(false)
+    clearSilentAuthAttempt()
+    expect(tryBeginSilentAuth()).toBe(true)
+  })
+
+  it('registers only approved DANA UI event types from the configured origin', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const cleanup = registerDanaUiEvents()
+    const listener = (browserWindow.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0][1] as (event: MessageEvent) => void
+    listener({ origin: 'https://other.example.com', data: { type: 'dana:host' } } as MessageEvent)
+    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'dana:auth', token: 'secret' } } as MessageEvent)
+    expect(log).not.toHaveBeenCalled()
+    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'dana:host' } } as MessageEvent)
+    expect(log).toHaveBeenCalledWith('DANA_UI_EVENT type=dana:host')
     cleanup()
     expect(browserWindow.removeEventListener).toHaveBeenCalledWith('message', expect.any(Function))
-  })
-
-  it('logs only type and object keys for messages from the approved parent origin', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    const cleanup = registerDanaParentDiagnostics()
-    const listener = (browserWindow.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0][1] as (event: MessageEvent) => void
-    listener({ origin: 'https://other.example.com', data: { type: 'ignored', token: 'secret' } } as MessageEvent)
-    expect(log).toHaveBeenCalledTimes(0)
-    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'ready', token: 'secret', user: 'private' } } as MessageEvent)
-    expect(log).toHaveBeenNthCalledWith(1, 'ORIGIN:', DANA_PARENT_ORIGIN)
-    expect(log).toHaveBeenNthCalledWith(2, 'TYPE:', 'ready')
-    expect(log).toHaveBeenNthCalledWith(3, 'DATA:', { type: 'ready', token: 'secret', user: 'private' })
-    expect(log).toHaveBeenNthCalledWith(4, 'DANA_PARENT_MESSAGE_KEYS=type,token,user')
-    cleanup()
-  })
-
-  it('opens DANA authentication in a popup only when explicitly requested', () => {
-    const popup = { closed: false } as Window
-    const open = vi.fn().mockReturnValue(popup)
-    browserWindow.open = open
-    expect(openDanaAuthPopup('https://qa-api.example.com/auth/login')).toBe(popup)
-    expect(open).toHaveBeenCalledWith('https://qa-api.example.com/auth/login', 'paramita-dana-auth', 'popup,width=600,height=750')
-    expect(location.href).toBe('')
-  })
-
-  it('returns null when the browser blocks the authentication popup', () => {
-    browserWindow.open = vi.fn().mockReturnValue(null)
-    expect(openDanaAuthPopup('https://qa-api.example.com/auth/login')).toBeNull()
-  })
-
-  it('relays an auth code from a popup to its opener without finalizing locally', () => {
-    const postMessage = vi.fn()
-    browserWindow.opener = { postMessage }
-    expect(handoffAuthCodeToOpener('one-time-code')).toBe(true)
-    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'one-time-code' }, 'https://qa.d1jxb89in36d10.amplifyapp.com')
-    expect(browserWindow.close).toHaveBeenCalledTimes(1)
-    expect(storage.has('paramita_session')).toBe(false)
-  })
-
-  it('accepts a single valid auth-code message from the known popup only', () => {
-    const popup = {} as Window
-    const validEvent = {
-      origin: 'https://qa.d1jxb89in36d10.amplifyapp.com',
-      source: popup,
-      data: { type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'one-time-code' },
-    } as MessageEvent
-    expect(getAuthCodeFromMessage(validEvent, popup)).toBe('one-time-code')
-    expect(getAuthCodeFromMessage({ ...validEvent, origin: 'https://console.danaconnect-qa.com' } as MessageEvent, popup)).toBeNull()
-    expect(getAuthCodeFromMessage({ ...validEvent, source: {} } as MessageEvent, popup)).toBeNull()
-    expect(getAuthCodeFromMessage({ ...validEvent, data: { type: PARAMITA_AUTH_CODE_MESSAGE, authCode: '' } } as MessageEvent, popup)).toBeNull()
-  })
-
-  it('creates one hidden silent authentication iframe and removes it when completed', () => {
-    const frame = {
-      src: '',
-      style: { display: '' },
-      setAttribute: vi.fn(),
-      remove: vi.fn(),
-    } as unknown as HTMLIFrameElement
-    const appendChild = vi.fn()
-    vi.stubGlobal('document', { title: 'Paramita', createElement: vi.fn().mockReturnValue(frame), body: { appendChild } })
-    const result = createSilentAuthFrame('https://qa-api.example.com/auth/login?silent=true')
-    expect(result).toBe(frame)
-    expect(frame.src).toBe('https://qa-api.example.com/auth/login?silent=true')
-    expect(frame.style.display).toBe('none')
-    expect(appendChild).toHaveBeenCalledWith(frame)
-    removeSilentAuthFrame(frame)
-    expect(frame.remove).toHaveBeenCalledTimes(1)
-  })
-
-  it('relays a silent iframe auth code to its parent without storing a session locally', () => {
-    const postMessage = vi.fn()
-    browserWindow.parent = { postMessage }
-    expect(handoffAuthCodeToContainer('silent-one-time-code')).toBe(true)
-    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_AUTH_CODE_MESSAGE, authCode: 'silent-one-time-code' }, location.origin)
-    expect(getSessionId()).toBeNull()
-  })
-
-  it('relays only safe silent-auth errors to the parent', () => {
-    const postMessage = vi.fn()
-    browserWindow.parent = { postMessage }
-    expect(handoffSilentAuthFailureToParent('login_required')).toBe(true)
-    expect(postMessage).toHaveBeenCalledWith({ type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'login_required' }, location.origin)
-    expect(handoffSilentAuthFailureToParent('sensitive backend detail')).toBe(true)
-    expect(postMessage).toHaveBeenLastCalledWith({ type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'silent_auth_failed' }, location.origin)
-  })
-
-  it('accepts silent failures only from the expected iframe and same origin', () => {
-    const silentFrame = {} as Window
-    const event = {
-      origin: location.origin,
-      source: silentFrame,
-      data: { type: PARAMITA_SILENT_AUTH_FAILED_MESSAGE, error: 'login_required' },
-    } as MessageEvent
-    expect(getEmbeddedAuthMessage(event, silentFrame)).toEqual({ type: 'silentFailure', error: 'login_required' })
-    expect(getEmbeddedAuthMessage({ ...event, origin: 'https://other.example.com' } as MessageEvent, silentFrame)).toBeNull()
-    expect(getEmbeddedAuthMessage({ ...event, source: {} } as MessageEvent, silentFrame)).toBeNull()
   })
 })

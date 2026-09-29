@@ -2,7 +2,9 @@ export const AUTH_LOGIN_COOLDOWN_MS = 60_000
 
 const AUTH_ATTEMPT_KEY = 'paramita_auth_attempt'
 const LEGACY_AUTH_ATTEMPT_KEY = 'paramita_auth_attempted'
+const SILENT_AUTH_ATTEMPT_KEY = 'paramita_silent_auth_attempted'
 let memoryState: AuthAttemptState | null = null
+let silentAttemptedInMemory = false
 
 export type AuthAttemptStatus = 'started' | 'failed' | 'succeeded'
 export interface AuthAttemptState {
@@ -79,5 +81,34 @@ export function clearAuthAttempt(): void {
     sessionStorage.removeItem(LEGACY_AUTH_ATTEMPT_KEY)
   } catch {
     // Ignore storage failures.
+  }
+}
+
+export function tryBeginSilentAuth(): boolean {
+  try {
+    if (sessionStorage.getItem(SILENT_AUTH_ATTEMPT_KEY) === 'true') return false
+    sessionStorage.setItem(SILENT_AUTH_ATTEMPT_KEY, 'true')
+    return true
+  } catch {
+    if (silentAttemptedInMemory) return false
+    silentAttemptedInMemory = true
+    return true
+  }
+}
+
+export function hasSilentAuthAttempted(): boolean {
+  try {
+    return sessionStorage.getItem(SILENT_AUTH_ATTEMPT_KEY) === 'true'
+  } catch {
+    return silentAttemptedInMemory
+  }
+}
+
+export function clearSilentAuthAttempt(): void {
+  silentAttemptedInMemory = false
+  try {
+    sessionStorage.removeItem(SILENT_AUTH_ATTEMPT_KEY)
+  } catch {
+    // Ignore storage failures; the backend remains the source of truth.
   }
 }
