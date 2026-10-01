@@ -1,8 +1,16 @@
 import { useEffect } from 'react'
 import type { AuthSession } from '../services/authApi'
-import { getApiBaseUrl } from '../services/apiConfig'
+import { localLogout } from '../services/authApi'
 
 const logoutMessageType = 'SESSION_LOGOUT'
+
+export function isSessionLogoutMessage(data: string): boolean {
+  try {
+    return (JSON.parse(data) as { type?: string }).type === logoutMessageType
+  } catch {
+    return false
+  }
+}
 
 export function useSessionWebSocket(session?: AuthSession) {
   const authenticated = session?.authenticated === true
@@ -20,15 +28,7 @@ export function useSessionWebSocket(session?: AuthSession) {
     }
 
     socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as { type?: string }
-        if (message.type === logoutMessageType) {
-          const apiUrl = getApiBaseUrl()
-          if (apiUrl) window.location.href = `${apiUrl}/auth/local-logout`
-        }
-      } catch {
-        // Ignore malformed messages without affecting the dashboard.
-      }
+      if (isSessionLogoutMessage(event.data)) void localLogout()
     }
 
     socket.onerror = () => {

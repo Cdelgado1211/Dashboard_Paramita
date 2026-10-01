@@ -1,9 +1,9 @@
 import type { DashboardResponse, MovementFilters, MovementResponse, MovementTracking } from '../types/movement'
 import { isHumanAttention, isReceiptPending, isStale } from '../utils/operationalMetrics'
 import { matchesWorkflowCategory } from '../utils/workflowCategories'
-import { getApiBaseUrl } from './apiConfig'
+import { requestJson } from './apiClient'
 
-async function request<T>(path: string): Promise<T> { const baseUrl = getApiBaseUrl(); if (!baseUrl) throw new Error('Falta configurar VITE_API_URL en el frontend.'); const response = await fetch(`${baseUrl}${path}`, { credentials: 'include', headers: { Accept: 'application/json' } }); if (!response.ok) throw new Error(`No fue posible consultar Paramita (${response.status}).`); return response.json() }
+async function request<T>(path: string): Promise<T> { return requestJson<T>(path) }
 export function getDashboard(): Promise<DashboardResponse> { return request<DashboardResponse>('/dashboard') }
 export function filterMovementOrders(orders: MovementTracking[], filters: MovementFilters): MovementTracking[] { const search = filters.search?.toLowerCase().trim(); return orders.filter(order => matchesWorkflowCategory(order.workflowStatus, filters.status) && (!filters.product || order.product === filters.product) && (!filters.attention || isHumanAttention(order) || isStale(order) || isReceiptPending(order)) && (!filters.gnpOnly || Boolean(order.gnp?.trackingOt)) && (!search || [order.caseId, order.policy, order.gnp?.trackingOt].some(value => value?.toLowerCase().includes(search))) && (!filters.from || (order.updatedAt ?? order.createdAt ?? '') >= filters.from) && (!filters.to || (order.updatedAt ?? order.createdAt ?? '') <= `${filters.to}T23:59:59`)) }
 export function getMovements(filters: MovementFilters = {}, dashboard: DashboardResponse): MovementResponse { const orders = filterMovementOrders(dashboard.orders ?? [], filters); const page = filters.page ?? 1; const size = filters.pageSize ?? 6; return { items: orders.slice((page - 1) * size, page * size), total: orders.length } }
