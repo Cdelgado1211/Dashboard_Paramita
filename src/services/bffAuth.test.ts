@@ -7,17 +7,19 @@ import { getDashboard, getMovementByCaseId } from './paramitaApi'
 import { isSessionLogoutMessage } from '../hooks/useSessionWebSocket'
 import { beginManualLogin, clearAuthAttempt, clearEmbeddedAuthAttempt, getAuthAttemptState, hasEmbeddedAuthAttempted, isAuthAttemptInCooldown, markAuthFailed, tryBeginAutomaticLogin, tryBeginEmbeddedAuth } from './authAttemptStore'
 import { clearLogoutPending, consumeLogoutPending, markLogoutPending } from './logoutState'
-import { DANA_PARENT_ORIGIN, isEmbeddedContext, isRunningInsideIframe, registerDanaUiEvents } from './embeddedAuth'
+import { isEmbeddedContext, isRunningInsideIframe, registerDanaUiEvents } from './embeddedAuth'
 
 const storage = new Map<string, string>()
-const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://qa.d1jxb89in36d10.amplifyapp.com' }
+const location = { hash: '', pathname: '/', search: '', href: '', origin: 'https://dashboard.example.com' }
 const history = { state: null, replaceState: vi.fn() }
 const browserWindow: Record<string, unknown> = { location, history, dispatchEvent: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), postMessage: vi.fn(), self: null, top: null, parent: null, opener: null, open: vi.fn(), close: vi.fn() }
 
 beforeEach(() => {
   storage.clear()
   vi.restoreAllMocks()
-  vi.stubEnv('VITE_API_URL', 'https://qa-api.example.com')
+  vi.stubEnv('VITE_API_URL', 'https://api.example.com')
+  vi.stubEnv('VITE_OIDC_ORIGIN', 'https://auth.example.com')
+  vi.stubEnv('VITE_DANA_PARENT_ORIGIN', 'https://console.example.com')
   vi.stubGlobal('sessionStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) })
   vi.stubGlobal('window', browserWindow)
   vi.stubGlobal('document', { title: 'Paramita' })
@@ -67,7 +69,7 @@ describe('BFF auth flow', () => {
     vi.stubGlobal('fetch', fetchMock)
     await Promise.all([finalizeAuthCode('code-once'), finalizeAuthCode('code-once')])
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/finalize', expect.objectContaining({ method: 'POST', body: JSON.stringify({ authCode: 'code-once' }) }))
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/auth/finalize', expect.objectContaining({ method: 'POST', body: JSON.stringify({ authCode: 'code-once' }) }))
     expect(getSessionId()).toBe('opaque-session')
     expect(hasEmbeddedAuthAttempted()).toBe(false)
     expect(storage.has('code-once')).toBe(false)
@@ -81,11 +83,11 @@ describe('BFF auth flow', () => {
   })
 
   it('prepares OAuth through the API and returns only a validated DANA authorization URL', async () => {
-    const authorizationUrl = 'https://auth.danaconnect-qa.com/oauth2/authorize?state=opaque-state'
+    const authorizationUrl = 'https://auth.example.com/oauth2/authorize?state=opaque-state'
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true, authorizationUrl }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(prepareAuthorizationUrl()).resolves.toBe(authorizationUrl)
-    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/prepare', expect.objectContaining({ method: 'GET' }))
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/auth/prepare', expect.objectContaining({ method: 'GET' }))
     expect(fetchMock.mock.calls[0][0]).not.toContain('/auth/login')
   })
 
@@ -110,7 +112,7 @@ describe('BFF auth flow', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ authenticated: true, authorized: true }))
     vi.stubGlobal('fetch', fetchMock)
     await getAuthSession()
-    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/session', expect.objectContaining({ headers: expect.any(Headers) }))
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/auth/session', expect.objectContaining({ headers: expect.any(Headers) }))
     expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Authorization')).toBe('Session session-123')
   })
 
@@ -126,7 +128,7 @@ describe('BFF auth flow', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 401))
     vi.stubGlobal('fetch', fetchMock)
     await expect(getAuthSession()).resolves.toEqual({ authenticated: false })
-    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/session', expect.any(Object))
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/auth/session', expect.any(Object))
     expect(getSessionId()).toBeNull()
   })
 
@@ -137,8 +139,8 @@ describe('BFF auth flow', () => {
     vi.stubGlobal('fetch', fetchMock)
     await finalizeAuthCode('fresh-code')
     await expect(getAuthSession()).resolves.toMatchObject({ authenticated: true, authorized: true })
-    expect(fetchMock.mock.calls[1][0]).toBe('https://qa-api.example.com/auth/session')
-    expect(fetchMock.mock.calls.filter(([url]) => url === 'https://qa-api.example.com/auth/session')).toHaveLength(1)
+    expect(fetchMock.mock.calls[1][0]).toBe('https://api.example.com/auth/session')
+    expect(fetchMock.mock.calls.filter(([url]) => url === 'https://api.example.com/auth/session')).toHaveLength(1)
   })
 
   it('uses Authorization: Session for dashboard and order requests', async () => {
@@ -189,10 +191,10 @@ describe('BFF auth flow', () => {
     const logoutCode = await initiateOidcLogout()
     const request = fetchMock.mock.calls[0][1] as RequestInit
     const url = buildOidcLogoutContinueUrl(logoutCode)
-    expect(fetchMock).toHaveBeenCalledWith('https://qa-api.example.com/auth/logout/initiate', expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/auth/logout/initiate', expect.objectContaining({ method: 'POST' }))
     expect(request.body).toBeUndefined()
     expect((request.headers as Headers).get('Authorization')).toBe('Session session-for-logout')
-    expect(url).toBe('https://qa-api.example.com/auth/logout/continue?code=logout-code-123')
+    expect(url).toBe('https://api.example.com/auth/logout/continue?code=logout-code-123')
     expect(url).not.toContain('session-for-logout')
     expect(getSessionId()).toBeNull()
     expect(storage.has('logout-code-123')).toBe(false)
@@ -306,13 +308,14 @@ describe('BFF auth flow', () => {
   })
 
   it('registers only approved DANA UI event types from the configured origin', () => {
+    const danaParentOrigin = 'https://console.example.com'
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const cleanup = registerDanaUiEvents()
     const listener = (browserWindow.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0][1] as (event: MessageEvent) => void
     listener({ origin: 'https://other.example.com', data: { type: 'dana:host' } } as MessageEvent)
-    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'dana:auth', token: 'secret' } } as MessageEvent)
+    listener({ origin: danaParentOrigin, data: { type: 'dana:auth', token: 'secret' } } as MessageEvent)
     expect(log).not.toHaveBeenCalled()
-    listener({ origin: DANA_PARENT_ORIGIN, data: { type: 'dana:host' } } as MessageEvent)
+    listener({ origin: danaParentOrigin, data: { type: 'dana:host' } } as MessageEvent)
     expect(log).toHaveBeenCalledWith('DANA_UI_EVENT type=dana:host')
     cleanup()
     expect(browserWindow.removeEventListener).toHaveBeenCalledWith('message', expect.any(Function))

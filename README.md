@@ -10,11 +10,13 @@ cp .env.example .env
 npm run dev
 ```
 
-Configura la API QA y el WebSocket en `.env` o en las variables de entorno de Amplify:
+Configura los endpoints del entorno en `.env` o en las variables de entorno de Amplify:
 
 ```env
-VITE_API_URL=https://api.paramita.danaconnect.us
-VITE_WS_URL=wss://tu-websocket.example.com/qa
+VITE_API_URL=
+VITE_OIDC_ORIGIN=
+VITE_DANA_PARENT_ORIGIN=
+VITE_WS_URL=
 ```
 
 El flujo BFF procesa el fragmento temporal `#auth_code` y lo intercambia una sola vez mediante `POST /auth/finalize`. Solo el `sessionId` opaco se guarda en `sessionStorage` bajo `paramita_session`; no se guardan tokens DANA ni credenciales en `localStorage`.
@@ -27,9 +29,9 @@ Authorization: Session <sessionId>
 
 La capa `src/services/paramitaApi.ts` consume `GET /dashboard` y `GET /orders/{caseId}`. El listado se obtiene desde `orders` dentro de `/dashboard`; los filtros y la paginación se aplican sobre ese resultado. El navegador nunca se conecta directamente a DynamoDB.
 
-## Requisitos del backend QA
+## Requisitos del backend
 
-CORS debe permitir para el origen exacto del frontend QA:
+CORS debe permitir el origen exacto del frontend del entorno correspondiente:
 
 - Methods: `GET`, `POST`, `OPTIONS`
 - Headers: `Authorization`, `Content-Type`, `Accept`

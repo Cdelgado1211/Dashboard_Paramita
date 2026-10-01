@@ -3,5 +3,5 @@ export function getApiBaseUrl() {
 }
 
 export function getOidcOrigin() {
-  return import.meta.env.VITE_OIDC_ORIGIN || 'https://auth.danaconnect-qa.com'
+  return import.meta.env.VITE_OIDC_ORIGIN || ''
 }
