@@ -23,21 +23,22 @@ const pageContent: Record<string, { title: string; description: string }> = { Da
 const clock = (value: Date) => value.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 function App() {
   const queryClient = useQueryClient()
-  const [sidebarOpen, setSidebarOpen] = useState(false), [active, setActive] = useState('Dashboard'), [filters, setFilters] = useState<MovementFilters>({ page: 1, pageSize: 6 }), [selected, setSelected] = useState<MovementTracking | null>(null)
-  const dashboardQuery = useQuery({ queryKey: ['paramita-dashboard'], queryFn: getDashboard })
-  const orderQuery = useQuery({ queryKey: ['paramita-order', selected?.caseId], queryFn: () => getMovementByCaseId(selected!.caseId), enabled: Boolean(selected?.caseId) })
+  const [sidebarOpen, setSidebarOpen] = useState(false), [active, setActive] = useState('Dashboard'), [filters, setFilters] = useState<MovementFilters>({ insuranceCompany: 'ALL', page: 1, pageSize: 6 }), [selected, setSelected] = useState<MovementTracking | null>(null)
+  const insuranceCompany = filters.insuranceCompany ?? 'ALL'
+  const dashboardQuery = useQuery({ queryKey: ['paramita-dashboard', insuranceCompany], queryFn: () => getDashboard(insuranceCompany) })
+  const orderQuery = useQuery({ queryKey: ['paramita-order', selected?.caseId, insuranceCompany], queryFn: () => getMovementByCaseId(selected!.caseId, insuranceCompany), enabled: Boolean(selected?.caseId) })
   const dashboard = dashboardQuery.data
   const data = dashboard?.summary
   const filtered = useMemo(() => dashboard ? getMovements(filters, dashboard) : { items: [], total: 0 }, [dashboard, filters])
   const content = pageContent[active], isDashboard = active === 'Dashboard'
   const isInsideIframe = isRunningInsideIframe()
   const lastUpdate = dashboardQuery.dataUpdatedAt ? new Date(dashboardQuery.dataUpdatedAt) : null
-  const updateFilters = (next: MovementFilters) => setFilters(next)
-  const clearFilters = () => setFilters({ page: 1, pageSize: 6 })
+  const updateFilters = (next: MovementFilters) => { if (next.insuranceCompany !== filters.insuranceCompany) setSelected(null); setFilters(next) }
+  const clearFilters = () => setFilters({ insuranceCompany: 'ALL', page: 1, pageSize: 6 })
   const applyNavigation = (item: string) => { setActive(item); setFilters(item === 'Requieren atención' ? { ...filters, status: '', attention: true, gnpOnly: false, page: 1 } : item === 'Procesados en GNP' ? { ...filters, status: '', attention: false, gnpOnly: true, page: 1 } : { ...filters, status: '', attention: false, gnpOnly: false, page: 1 }) }
   const metric = (key: string) => setFilters(key === 'total' ? { ...filters, status: '', attention: false, gnpOnly: false, page: 1 } : key === 'attention' ? { ...filters, attention: true, status: '', gnpOnly: false, page: 1 } : { ...filters, status: key, attention: false, gnpOnly: false, page: 1 })
-  const openCase = (selection: string | MovementTracking) => { const caseId = typeof selection === 'string' ? selection : selection.caseId; const preview = dashboard?.orders.find(order => order.caseId === caseId); if (preview) setSelected(preview); else setSelected({ caseId, movementLabel: '—', stageLabel: '—', statusLabel: '—', dashboardStatus: 'pending', operationalStatus: { code: '', label: '—', description: '—', requiresHumanAction: false } }); void queryClient.prefetchQuery({ queryKey: ['paramita-order', caseId], queryFn: () => getMovementByCaseId(caseId), staleTime: 10 * 60 * 1000 }) }
-  const refresh = async () => { await dashboardQuery.refetch(); if (selected?.caseId) await queryClient.refetchQueries({ queryKey: ['paramita-order', selected.caseId] }) }
+  const openCase = (selection: string | MovementTracking) => { const caseId = typeof selection === 'string' ? selection : selection.caseId; const preview = dashboard?.orders.find(order => order.caseId === caseId); if (preview) setSelected(preview); else setSelected({ caseId, movementLabel: '—', stageLabel: '—', statusLabel: '—', dashboardStatus: 'pending', operationalStatus: { code: '', label: '—', description: '—', requiresHumanAction: false } }); void queryClient.prefetchQuery({ queryKey: ['paramita-order', caseId, insuranceCompany], queryFn: () => getMovementByCaseId(caseId, insuranceCompany), staleTime: 10 * 60 * 1000 }) }
+  const refresh = async () => { await dashboardQuery.refetch(); if (selected?.caseId) await queryClient.refetchQueries({ queryKey: ['paramita-order', selected.caseId, insuranceCompany] }) }
   const logout = async () => { try { const logoutCode = await initiateOidcLogout(); markLogoutPending(); window.location.assign(buildOidcLogoutContinueUrl(logoutCode)) } catch { clearSessionId(); markAuthAttempt(); window.location.href = '/' } }
   const displayOrder = orderQuery.data?.order ?? selected
   const errorMessage = dashboardQuery.isError ? 'No se pudo obtener la actualización más reciente. Se muestran los últimos datos disponibles.' : orderQuery.isError ? 'No se pudo obtener la actualización más reciente del detalle. Se muestran los últimos datos disponibles.' : ''

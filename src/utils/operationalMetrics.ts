@@ -1,12 +1,13 @@
 import type { MovementTracking } from '../types/movement'
+import { hasHumanReviewCondition, isAllianzDraftPrepared } from './movementPresentation'
 
 export const STALE_THRESHOLD_HOURS = 24
 const staleMs = STALE_THRESHOLD_HOURS * 60 * 60 * 1000
 export const getLastUpdate = (order: MovementTracking) => order.updatedAt || order.createdAt
-export const isHumanAttention = (order: MovementTracking) => order.operationalStatus?.requiresHumanAction === true
+export const isHumanAttention = (order: MovementTracking) => isAllianzDraftPrepared(order) ? hasHumanReviewCondition(order) : order.operationalStatus?.requiresHumanAction === true
 export const isStale = (order: MovementTracking, now = Date.now()) => { const timestamp = getLastUpdate(order); return Boolean(timestamp && now - new Date(timestamp).getTime() > staleMs) }
 export const isReceiptPending = (order: MovementTracking) => Boolean(order.gnp?.trackingOt && !order.receipt)
-export const isOperationalAttention = (order: MovementTracking) => isHumanAttention(order) || isStale(order) || isReceiptPending(order)
+export const isOperationalAttention = (order: MovementTracking) => isAllianzDraftPrepared(order) ? hasHumanReviewCondition(order) : isHumanAttention(order) || isStale(order) || isReceiptPending(order)
 export const getAge = (order: MovementTracking, now = Date.now()) => { const timestamp = getLastUpdate(order); if (!timestamp) return '—'; const minutes = Math.max(0, Math.floor((now - new Date(timestamp).getTime()) / 60000)); if (minutes < 60) return `Hace ${minutes || 1} min`; const hours = Math.floor(minutes / 60); if (hours < 24) return `Hace ${hours} h`; const days = Math.floor(hours / 24); return `Hace ${days} día${days === 1 ? '' : 's'}` }
 export const getReasonCodes = (order: MovementTracking) => { const review = Array.isArray(order.reviewDetails?.reasonCodes) ? order.reviewDetails.reasonCodes as string[] : []; const followUp = Array.isArray(order.followUpDetails?.reasonCodes) ? order.followUpDetails.reasonCodes as string[] : []; return [...review, ...followUp] }
 export const reasonLabels: Record<string, string> = { SICAS_OT_NOT_FOUND: 'OT no encontrada en SICAS', BIRTH_CERTIFICATE_REQUIRED: 'Acta de nacimiento requerida', BIRTH_DATE_PROOF_REQUIRED: 'Soporte de fecha de nacimiento requerido', MODIFICATION_TYPE_UNRESOLVED: 'Tipo de modificación no identificado', SENIORITY_DATE_MISMATCH_WITH_SUPPORT: 'Fecha de antigüedad no coincide con soporte', SENIORITY_DATE_NOT_HISTORICAL: 'Fecha de antigüedad no válida', SENIORITY_DATE_REQUIRED_IN_ODT: 'Falta fecha de antigüedad en ODT', SENIORITY_MODIFICATION_SUPPORT_NOT_MATCHED: 'Soporte de antigüedad no asociado al asegurado', SENIORITY_SUPPORT_CONFLICTING_DATES: 'Fechas de antigüedad contradictorias' }
