@@ -7,6 +7,8 @@ export const isAllianz = (movement: Pick<MovementTracking, 'insuranceCompany'>) 
 export const isAllianzDraftPrepared = (movement: Pick<MovementTracking, 'insuranceCompany' | 'workflowStatus'>) => isAllianz(movement) && movement.workflowStatus === 'DRAFT_PREPARED'
 export const hasHumanReviewCondition = (movement: Pick<MovementTracking, 'reviewRequired' | 'supportReviewRequired' | 'workflowStatus'>) => movement.reviewRequired === true || movement.supportReviewRequired === true || movement.workflowStatus === 'REQUIRES_REVIEW' || movement.workflowStatus === 'SUPPORT_REVIEW_REQUIRED'
 export const getStoredFilesIndicator = (movement: MovementTracking) => {
+  const documentCount = getAllianzDocumentRows(movement).filter(document => document.status !== 'Pendiente').length
+  if (documentCount) return `${documentCount} archivo${documentCount === 1 ? '' : 's'} almacenado${documentCount === 1 ? '' : 's'}`
   const storedFiles = movement.allianz?.storedFiles ?? movement.allianz?.filesStored ?? movement.storedFiles
   if (typeof storedFiles === 'number') return storedFiles > 0 ? `${storedFiles} archivo${storedFiles === 1 ? '' : 's'} almacenado${storedFiles === 1 ? '' : 's'}` : 'Sin archivos almacenados'
   if (Array.isArray(storedFiles)) return storedFiles.length ? `${storedFiles.length} archivo${storedFiles.length === 1 ? '' : 's'} almacenado${storedFiles.length === 1 ? '' : 's'}` : 'Sin archivos almacenados'
@@ -30,10 +32,16 @@ export const getAllianzTimeline = (movement: MovementTracking): Checkpoint[] | u
 
 export const getAllianzDocumentRows = (movement: MovementTracking) => {
   const notices = movement.allianzDocumentNotices ?? movement.allianz?.documentNotices ?? []
-  const welcomeNotice = notices.find(notice => notice.document?.filename === 'Carta_Bienvenida.pdf')
+  const welcomeNotice = notices.find(notice => notice.stored === true && /carta[ _-]*bienvenida/i.test(notice.document?.filename ?? ''))
+  const completedRuns = (movement.allianz?.documentRuns ?? []).filter(run => run.technicalStorageStatus === 'COMPLETED' && Boolean(run.noticeReceivedAt)).sort((left, right) => (right.completedAt ?? '').localeCompare(left.completedAt ?? ''))
+  const documentStatus = (documentType: string) => {
+    const run = completedRuns.find(candidate => candidate.documents?.[documentType]?.stored === true && candidate.documents?.[documentType]?.validated === true)
+    if (!run) return 'Pendiente'
+    return run.identityValidation === 'STRUCTURAL_ONLY' ? 'Descargado; pendiente de revisión documental' : 'Descargado y validado'
+  }
   return [
     { name: 'Carta_Bienvenida.pdf', status: welcomeNotice ? 'Recibida y almacenada' : 'Pendiente' },
-    { name: 'Endoso de Alta', status: 'Pendiente' },
-    { name: 'Registro de Asegurados', status: 'Pendiente' },
+    { name: 'Endoso de Alta', status: documentStatus('ENDOSO_ALTA') },
+    { name: 'Registro de Asegurados', status: documentStatus('REGISTRO_ASEGURADO') },
   ]
 }
