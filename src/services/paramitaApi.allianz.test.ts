@@ -88,7 +88,7 @@ describe('Allianz phase 1 API compatibility', () => {
   })
 
   it('keeps NOTICE_RECEIVED documentary work pending and exposes no download URL', () => {
-    const order = allianzDraft({ allianzDocumentNotices: [{ status: 'DOCUMENT_NOTICE_RECEIVED', receivedAt: '2026-11-17T00:29:22Z', documentDownloaded: false, documentValidated: false, document: { filename: 'Carta_Bienvenida.pdf' } }] })
+    const order = allianzDraft({ allianzDocumentNotices: [{ status: 'DOCUMENT_NOTICE_RECEIVED', receivedAt: '2026-11-17T00:29:22Z', stored: true, documentDownloaded: false, documentValidated: false, document: { filename: 'Carta_Bienvenida.pdf' } }] })
     expect(getAllianzDocumentRows(order)).toEqual([
       { name: 'Carta_Bienvenida.pdf', status: 'Recibida y almacenada' },
       { name: 'Endoso de Alta', status: 'Pendiente' },
@@ -97,7 +97,7 @@ describe('Allianz phase 1 API compatibility', () => {
   })
 
   it('accepts sanitized document notices when the API nests them in the Allianz summary', () => {
-    const order = allianzDraft({ allianz: { documentNotices: [{ document: { filename: 'Carta_Bienvenida.pdf' } }] } })
+    const order = allianzDraft({ allianz: { documentNotices: [{ stored: true, document: { filename: 'Carta_Bienvenida.pdf' } }] } })
     expect(getAllianzDocumentRows(order)[0]).toEqual({ name: 'Carta_Bienvenida.pdf', status: 'Recibida y almacenada' })
   })
 
@@ -112,5 +112,26 @@ describe('Allianz phase 1 API compatibility', () => {
     expect(getWorkflowStatusLabel('MOVEMENT_ATTENDED')).toBe('Movimiento atendido')
     expect(getWorkflowStatusLabel('TICKET_ASSIGNED')).not.toBe('Aviso de emisión recibido')
     expect(getWorkflowStatusLabel('MOVEMENT_ATTENDED')).not.toBe('Aviso de emisión recibido')
+  })
+
+  it('shows structurally checked stored PDFs as downloaded but pending documentary review', () => {
+    const order = allianzDraft({ allianz: { documentNotices: [{ stored: true, document: { filename: 'Carta_Bienvenida (1).pdf' } }], documentRuns: [{ noticeReceivedAt: '2026-11-20T21:57:01Z', technicalStorageStatus: 'COMPLETED', identityValidation: 'STRUCTURAL_ONLY', completedAt: '2026-11-20T22:10:43Z', documents: { ENDOSO_ALTA: { stored: true, validated: true }, REGISTRO_ASEGURADO: { stored: true, validated: true } } }] } })
+    expect(getAllianzDocumentRows(order)).toEqual([
+      { name: 'Carta_Bienvenida.pdf', status: 'Recibida y almacenada' },
+      { name: 'Endoso de Alta', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Descargado; pendiente de revisión documental' },
+    ])
+  })
+
+  it('keeps partial downloads and unrelated or failed attempts pending', () => {
+    const order = allianzDraft({ allianz: { documentRuns: [
+      { noticeReceivedAt: null, technicalStorageStatus: 'COMPLETED', identityValidation: 'STRUCTURAL_ONLY', documents: { ENDOSO_ALTA: { stored: true, validated: true } } },
+      { noticeReceivedAt: '2026-11-20T21:57:01Z', technicalStorageStatus: 'FAILED', identityValidation: 'STRUCTURAL_ONLY', documents: { REGISTRO_ASEGURADO: { stored: true, validated: true } } },
+      { noticeReceivedAt: '2026-11-20T21:57:01Z', technicalStorageStatus: 'COMPLETED', identityValidation: 'STRUCTURAL_ONLY', completedAt: '2026-11-20T22:10:43Z', documents: { ENDOSO_ALTA: { stored: true, validated: true } } },
+    ] } })
+    expect(getAllianzDocumentRows(order).slice(1)).toEqual([
+      { name: 'Endoso de Alta', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Pendiente' },
+    ])
   })
 })
