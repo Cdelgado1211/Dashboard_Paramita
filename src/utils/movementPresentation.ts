@@ -30,18 +30,55 @@ export const getAllianzTimeline = (movement: MovementTracking): Checkpoint[] | u
   }).sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? '')).map(({ index: _index, ...checkpoint }) => checkpoint)
 }
 
+const allianzDocumentNames: Record<string, string> = {
+  ENDOSO_ALTA: 'Endoso de Alta',
+  ENDOSO_BAJA: 'Endoso de Baja',
+  REGISTRO_ASEGURADO: 'Registro de Asegurados',
+}
+
+const normalizedAllianzMovement = (movementType?: string | null) => movementType?.trim().toUpperCase()
+
+const getAllianzDocumentMovement = (movement: MovementTracking) => {
+  const runs = movement.allianz?.documentRuns ?? []
+  return normalizedAllianzMovement(movement.movementType)
+    ?? runs.map(run => normalizedAllianzMovement(run.movementType)).find(type => type === 'ALTA' || type === 'BAJA')
+}
+
+const requiredAllianzDocuments = (movement: MovementTracking) => {
+  const movementType = getAllianzDocumentMovement(movement)
+  if (movementType === 'BAJA') return ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO']
+  if (movementType === 'ALTA') return ['ENDOSO_ALTA', 'REGISTRO_ASEGURADO']
+
+  // API responses predating movementType keep the established ALTA view.
+  return ['ENDOSO_ALTA', 'REGISTRO_ASEGURADO']
+}
+
+const documentDownloadStatus = (identityValidation?: string | null) => {
+  const identity = identityValidation?.trim().toUpperCase()
+  if (!identity || identity === 'VERIFIED') return 'Descargado'
+  return 'Descargado; pendiente de revisión documental'
+}
+
 export const getAllianzDocumentRows = (movement: MovementTracking) => {
   const notices = movement.allianzDocumentNotices ?? movement.allianz?.documentNotices ?? []
   const welcomeNotice = notices.find(notice => notice.stored === true && /carta[ _-]*bienvenida/i.test(notice.document?.filename ?? ''))
-  const completedRuns = (movement.allianz?.documentRuns ?? []).filter(run => run.technicalStorageStatus === 'COMPLETED' && Boolean(run.noticeReceivedAt)).sort((left, right) => (right.completedAt ?? '').localeCompare(left.completedAt ?? ''))
+  const requiredDocuments = requiredAllianzDocuments(movement)
+  const movementType = getAllianzDocumentMovement(movement)
+  const completedRuns = (movement.allianz?.documentRuns ?? [])
+    .filter(run => run.technicalStorageStatus === 'COMPLETED' && Boolean(run.noticeReceivedAt))
+    .sort((left, right) => (right.completedAt ?? '').localeCompare(left.completedAt ?? ''))
   const documentStatus = (documentType: string) => {
-    const run = completedRuns.find(candidate => candidate.documents?.[documentType]?.stored === true && candidate.documents?.[documentType]?.validated === true)
-    if (!run) return 'Pendiente'
-    return run.identityValidation === 'STRUCTURAL_ONLY' ? 'Descargado; pendiente de revisión documental' : 'Descargado y validado'
+    const run = completedRuns.find(candidate =>
+      (!movementType || !candidate.movementType || normalizedAllianzMovement(candidate.movementType) === movementType)
+      &&
+      (!candidate.requiredDocuments?.length || candidate.requiredDocuments.includes(documentType))
+      && candidate.documents?.[documentType]?.stored === true
+      && candidate.documents?.[documentType]?.validated === true,
+    )
+    return run ? documentDownloadStatus(run.identityValidation) : 'Pendiente'
   }
   return [
     { name: 'Carta_Bienvenida.pdf', status: welcomeNotice ? 'Recibida y almacenada' : 'Pendiente' },
-    { name: 'Endoso de Alta', status: documentStatus('ENDOSO_ALTA') },
-    { name: 'Registro de Asegurados', status: documentStatus('REGISTRO_ASEGURADO') },
+    ...requiredDocuments.map(documentType => ({ name: allianzDocumentNames[documentType] ?? documentType, status: documentStatus(documentType) })),
   ]
 }

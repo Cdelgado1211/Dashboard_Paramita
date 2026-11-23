@@ -123,6 +123,117 @@ describe('Allianz phase 1 API compatibility', () => {
     ])
   })
 
+  it('shows the BAJA plan with both downloaded documents when its documented run is complete', () => {
+    const order = allianzDraft({ movementType: 'BAJA', allianz: { documentRuns: [{
+      noticeReceivedAt: '2026-11-20T21:57:01Z',
+      technicalStorageStatus: 'COMPLETED',
+      identityValidation: 'VERIFIED',
+      completedAt: '2026-11-20T22:10:43Z',
+      movementType: 'BAJA',
+      requiredDocuments: ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO'],
+      documents: {
+        ENDOSO_BAJA: { stored: true, validated: true },
+        REGISTRO_ASEGURADO: { stored: true, validated: true },
+      },
+    }] } })
+
+    expect(getAllianzDocumentRows(order)).toEqual([
+      { name: 'Carta_Bienvenida.pdf', status: 'Pendiente' },
+      { name: 'Endoso de Baja', status: 'Descargado' },
+      { name: 'Registro de Asegurados', status: 'Descargado' },
+    ])
+  })
+
+  it('keeps a BAJA document pending when no completed documented run contains it', () => {
+    const order = allianzDraft({ movementType: 'BAJA', allianz: { documentRuns: [{
+      noticeReceivedAt: '2026-11-20T21:57:01Z',
+      technicalStorageStatus: 'COMPLETED',
+      identityValidation: 'STRUCTURAL_ONLY',
+      movementType: 'BAJA',
+      requiredDocuments: ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO'],
+      documents: { ENDOSO_BAJA: { stored: true, validated: true } },
+    }] } })
+
+    expect(getAllianzDocumentRows(order).slice(1)).toEqual([
+      { name: 'Endoso de Baja', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Pendiente' },
+    ])
+  })
+
+  it('does not treat technical storage completion as documentary evidence', () => {
+    const order = allianzDraft({ movementType: 'BAJA', allianz: { documentRuns: [{
+      noticeReceivedAt: '2026-11-20T21:57:01Z',
+      technicalStorageStatus: 'COMPLETED',
+      identityValidation: 'VERIFIED',
+      movementType: 'BAJA',
+      requiredDocuments: ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO'],
+      documents: {
+        ENDOSO_BAJA: { stored: true, validated: false },
+        REGISTRO_ASEGURADO: { stored: false, validated: false },
+      },
+    }] } })
+
+    expect(getAllianzDocumentRows(order).slice(1)).toEqual([
+      { name: 'Endoso de Baja', status: 'Pendiente' },
+      { name: 'Registro de Asegurados', status: 'Pendiente' },
+    ])
+  })
+
+  it('preserves the ALTA plan for historical Allianz records without the new fields', () => {
+    const order = allianzDraft({ allianz: { documentRuns: [{
+      noticeReceivedAt: '2026-11-20T21:57:01Z',
+      technicalStorageStatus: 'COMPLETED',
+      documents: { ENDOSO_ALTA: { stored: true, validated: true } },
+    }] } })
+
+    expect(getAllianzDocumentRows(order).slice(1)).toEqual([
+      { name: 'Endoso de Alta', status: 'Descargado' },
+      { name: 'Registro de Asegurados', status: 'Pendiente' },
+    ])
+  })
+
+  it('uses a completed BAJA retry and ignores failed or stale ALTA attempts', () => {
+    const order = allianzDraft({ movementType: 'BAJA', allianz: { documentRuns: [
+      {
+        noticeReceivedAt: '2026-11-20T20:57:01Z',
+        technicalStorageStatus: 'FAILED',
+        identityValidation: 'STRUCTURAL_ONLY',
+        movementType: 'BAJA',
+        requiredDocuments: ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO'],
+        documents: { ENDOSO_BAJA: { stored: true, validated: true } },
+      },
+      {
+        noticeReceivedAt: '2026-11-20T21:57:01Z',
+        technicalStorageStatus: 'COMPLETED',
+        identityValidation: 'STRUCTURAL_ONLY',
+        completedAt: '2026-11-20T22:10:43Z',
+        movementType: 'BAJA',
+        requiredDocuments: ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO'],
+        documents: {
+          ENDOSO_BAJA: { stored: true, validated: true },
+          REGISTRO_ASEGURADO: { stored: true, validated: true },
+        },
+      },
+      {
+        noticeReceivedAt: '2026-11-20T22:57:01Z',
+        technicalStorageStatus: 'COMPLETED',
+        identityValidation: 'VERIFIED',
+        completedAt: '2026-11-20T23:10:43Z',
+        movementType: 'ALTA',
+        requiredDocuments: ['ENDOSO_ALTA', 'REGISTRO_ASEGURADO'],
+        documents: {
+          ENDOSO_ALTA: { stored: true, validated: true },
+          REGISTRO_ASEGURADO: { stored: true, validated: true },
+        },
+      },
+    ] } })
+
+    expect(getAllianzDocumentRows(order).slice(1)).toEqual([
+      { name: 'Endoso de Baja', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Descargado; pendiente de revisión documental' },
+    ])
+  })
+
   it('keeps partial downloads and unrelated or failed attempts pending', () => {
     const order = allianzDraft({ allianz: { documentRuns: [
       { noticeReceivedAt: null, technicalStorageStatus: 'COMPLETED', identityValidation: 'STRUCTURAL_ONLY', documents: { ENDOSO_ALTA: { stored: true, validated: true } } },
