@@ -1,4 +1,4 @@
-import type { Checkpoint, MovementTracking } from '../types/movement'
+import type { AllianzRequiredDocument, Checkpoint, MovementTracking } from '../types/movement'
 
 type CaseReference = Pick<MovementTracking, 'caseId' | 'displayCaseId'>
 
@@ -30,9 +30,10 @@ export const getAllianzTimeline = (movement: MovementTracking): Checkpoint[] | u
   }).sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? '')).map(({ index: _index, ...checkpoint }) => checkpoint)
 }
 
-const allianzDocumentNames: Record<string, string> = {
+const allianzDocumentNames: Record<AllianzRequiredDocument, string> = {
   ENDOSO_ALTA: 'Endoso de Alta',
   ENDOSO_BAJA: 'Endoso de Baja',
+  ENDOSO_MOVIMIENTO: 'Endoso de Movimiento',
   REGISTRO_ASEGURADO: 'Registro de Asegurados',
 }
 
@@ -41,12 +42,13 @@ const normalizedAllianzMovement = (movementType?: string | null) => movementType
 const getAllianzDocumentMovement = (movement: MovementTracking) => {
   const runs = movement.allianz?.documentRuns ?? []
   return normalizedAllianzMovement(movement.movementType)
-    ?? runs.map(run => normalizedAllianzMovement(run.movementType)).find(type => type === 'ALTA' || type === 'BAJA')
+    ?? runs.map(run => normalizedAllianzMovement(run.movementType)).find(type => type === 'ALTA' || type === 'BAJA' || type === 'MODIFICACION')
 }
 
-const requiredAllianzDocuments = (movement: MovementTracking) => {
+const requiredAllianzDocuments = (movement: MovementTracking): AllianzRequiredDocument[] => {
   const movementType = getAllianzDocumentMovement(movement)
   if (movementType === 'BAJA') return ['ENDOSO_BAJA', 'REGISTRO_ASEGURADO']
+  if (movementType === 'MODIFICACION') return ['ENDOSO_MOVIMIENTO', 'REGISTRO_ASEGURADO']
   if (movementType === 'ALTA') return ['ENDOSO_ALTA', 'REGISTRO_ASEGURADO']
 
   // API responses predating movementType keep the established ALTA view.
@@ -67,7 +69,7 @@ export const getAllianzDocumentRows = (movement: MovementTracking) => {
   const completedRuns = (movement.allianz?.documentRuns ?? [])
     .filter(run => run.technicalStorageStatus === 'COMPLETED' && Boolean(run.noticeReceivedAt))
     .sort((left, right) => (right.completedAt ?? '').localeCompare(left.completedAt ?? ''))
-  const documentStatus = (documentType: string) => {
+  const documentStatus = (documentType: AllianzRequiredDocument) => {
     const run = completedRuns.find(candidate =>
       (!movementType || !candidate.movementType || normalizedAllianzMovement(candidate.movementType) === movementType)
       &&
@@ -79,6 +81,6 @@ export const getAllianzDocumentRows = (movement: MovementTracking) => {
   }
   return [
     { name: 'Carta_Bienvenida.pdf', status: welcomeNotice ? 'Recibida y almacenada' : 'Pendiente' },
-    ...requiredDocuments.map(documentType => ({ name: allianzDocumentNames[documentType] ?? documentType, status: documentStatus(documentType) })),
+    ...requiredDocuments.map(documentType => ({ name: allianzDocumentNames[documentType], status: documentStatus(documentType) })),
   ]
 }

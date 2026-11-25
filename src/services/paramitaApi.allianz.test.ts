@@ -160,6 +160,52 @@ describe('Allianz phase 1 API compatibility', () => {
     ])
   })
 
+  it('shows the MODIFICACION plan without either Alta or Baja endorsement', () => {
+    const order = allianzDraft({ movementType: 'MODIFICACION', allianz: { documentRuns: [{
+      noticeReceivedAt: '2026-11-20T21:57:01Z',
+      technicalStorageStatus: 'COMPLETED',
+      identityValidation: 'STRUCTURAL_ONLY',
+      movementType: 'MODIFICACION',
+      requiredDocuments: ['ENDOSO_MOVIMIENTO', 'REGISTRO_ASEGURADO'],
+      documents: {
+        ENDOSO_MOVIMIENTO: { stored: true, validated: true },
+        REGISTRO_ASEGURADO: { stored: true, validated: true },
+      },
+    }] } })
+
+    const documents = getAllianzDocumentRows(order)
+    expect(documents).toEqual([
+      { name: 'Carta_Bienvenida.pdf', status: 'Pendiente' },
+      { name: 'Endoso de Movimiento', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Descargado; pendiente de revisión documental' },
+    ])
+    expect(documents.map(document => document.name)).not.toContain('Endoso de Alta')
+    expect(documents.map(document => document.name)).not.toContain('Endoso de Baja')
+  })
+
+  it('keeps partial MODIFICACION documents pending across multiple notices', () => {
+    const order = allianzDraft({ movementType: 'MODIFICACION', allianz: {
+      documentNotices: [
+        { stored: true, document: { filename: 'Carta_Bienvenida.pdf' } },
+        { stored: true, document: { filename: 'Carta_Bienvenida (1).pdf' } },
+      ],
+      documentRuns: [{
+        noticeReceivedAt: '2026-11-20T21:57:01Z',
+        technicalStorageStatus: 'COMPLETED',
+        identityValidation: 'STRUCTURAL_ONLY',
+        movementType: 'MODIFICACION',
+        requiredDocuments: ['ENDOSO_MOVIMIENTO', 'REGISTRO_ASEGURADO'],
+        documents: { ENDOSO_MOVIMIENTO: { stored: true, validated: true } },
+      }],
+    } })
+
+    expect(getAllianzDocumentRows(order)).toEqual([
+      { name: 'Carta_Bienvenida.pdf', status: 'Recibida y almacenada' },
+      { name: 'Endoso de Movimiento', status: 'Descargado; pendiente de revisión documental' },
+      { name: 'Registro de Asegurados', status: 'Pendiente' },
+    ])
+  })
+
   it('does not treat technical storage completion as documentary evidence', () => {
     const order = allianzDraft({ movementType: 'BAJA', allianz: { documentRuns: [{
       noticeReceivedAt: '2026-11-20T21:57:01Z',
