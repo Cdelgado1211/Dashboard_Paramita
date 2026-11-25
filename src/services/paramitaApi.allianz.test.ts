@@ -4,6 +4,7 @@ import type { MovementTracking } from '../types/movement'
 import { isHumanAttention, isOperationalAttention } from '../utils/operationalMetrics'
 import { getAllianzDocumentRows, getAllianzTimeline, getDisplayCaseId } from '../utils/movementPresentation'
 import { getWorkflowStageLabel, getWorkflowStatusLabel, getWorkflowStatusPresentation } from '../utils/workflowPresentation'
+import { matchesWorkflowCategory } from '../utils/workflowCategories'
 
 const jsonResponse = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 const allianzDraft = (overrides: Partial<MovementTracking> = {}): MovementTracking => ({
@@ -64,6 +65,17 @@ describe('Allianz phase 1 API compatibility', () => {
     expect(getWorkflowStatusLabel('DRAFT_PREPARED')).toBe('Borrador Allianz preparado')
     expect(getWorkflowStatusLabel('ALLIANZ_DRAFT')).toBe('Preparación de borrador Allianz')
     expect(getWorkflowStatusPresentation('DRAFT_PREPARED').category).toBe('info')
+  })
+
+  it('presents terminal Allianz COMPLETED as a successful completed movement while preserving GNP completion', () => {
+    const allianzCompleted = allianzDraft({ caseId: 'ALLIANZ#OT-0000099012', workflowStatus: 'COMPLETED', workflowStage: 'COMPLETED', statusLabel: '—', stageLabel: '—', dashboardStatus: 'completed' })
+    const gnpCompleted = allianzDraft({ caseId: 'OT-0000099638', insuranceCompany: 'GNP', workflowStatus: 'GNP_COMPLETED', workflowStage: 'GNP_TRACKING', dashboardStatus: 'completed' })
+
+    expect(getWorkflowStatusLabel('COMPLETED')).toBe('Completado')
+    expect(getWorkflowStatusPresentation('COMPLETED')).toMatchObject({ label: 'Completado', category: 'success', icon: '✓' })
+    expect(matchesWorkflowCategory('COMPLETED', 'completed')).toBe(true)
+    expect(matchesWorkflowCategory('GNP_COMPLETED', 'completed')).toBe(true)
+    expect(filterMovementOrders([allianzCompleted, gnpCompleted], { status: 'completed' })).toEqual([allianzCompleted, gnpCompleted])
   })
 
   it('maps the four persisted Allianz reply events in chronological order without inventing timestamps', () => {
